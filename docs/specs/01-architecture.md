@@ -16,6 +16,11 @@ Local daemon  "junosd"  (Node + TypeScript)
 ```
 The UI cannot touch CLIs or the filesystem; the daemon can. Why a daemon: subscriptions are reachable only through local CLIs and sessions, crons must run while the tab is closed, and secrets must not live in browser storage.
 
+## Where things run
+- **Jonas's machine**: web UI, junosd, SQLite, provider CLIs (their logins live here).
+- **VPS**: Hermes only, plus its small shim (see 06). junosd connects out to it over Tailscale/WireGuard or an SSH tunnel; nothing on the VPS holds subscription logins for the other providers.
+- Because crons run in junosd, laptop sleep matters; if it becomes a problem, move junosd to the VPS too (then provider logins would need to be done there, so re-check provider terms first).
+
 ## Why not a hosted backend
 Subscription sign-ins are tied to Jonas's machine and ToS. A hosted service would need his tokens. Keep everything on localhost; optionally expose through a private tunnel (Tailscale) later for phone access.
 

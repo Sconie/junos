@@ -15,7 +15,15 @@ GET/PUT /hermes/skills    -> list/toggle tools
 GET  /hermes/queue        -> pending tasks
 POST /hermes/approvals/:id {decision}
 ```
-If Hermes is a CLI process, the wrapper holds the process and translates stdout to this schema. Defining the wire format first (and mocking it) lets the UI be built before Hermes is connected. **Needs from Jonas:** how Hermes runs today (CLI, gateway, Docker?) and where its memory lives.
+**Deployment (confirmed by Jonas, 2026-10-21): Hermes runs on a VPS**, not on the machine running junosd. So the bridge is remote:
+- junosd reaches the VPS over a private channel only: Tailscale/WireGuard, or an SSH tunnel. The Hermes API is never exposed on the public internet.
+- Auth: a dedicated bridge token (kept in the OS keychain) plus the private network; rotate on demand.
+- A small **hermes-agent-shim** on the VPS (systemd service, bound to the private interface) translates between Hermes (CLI/gateway) and the wire format above, and tails its logs and memory files. Until it exists, the UI runs on a mock.
+- The SSE stream must tolerate reconnects: the shim keeps a short ring buffer and junosd resumes by `Last-Event-ID`.
+- Hermes works on the VPS filesystem, not Jonas's local files. Projects handed over are synced by git (push branch, Hermes clones) or an explicit upload; "Give to Hermes" on a local file uploads a copy and says so.
+- Status adds `unreachable` (VPS or tunnel down) distinct from `error`.
+
+Defining the wire format first (and mocking it) lets the UI be built before Hermes is connected. **Still needed from Jonas:** how Hermes runs on the VPS (CLI, gateway, Docker?), where its memory lives, and whether Tailscale is available.
 
 ## Screen (matches mockup)
 Header: name, status pill (pulsing when working), model, uptime, Pause/Stop/Settings.
@@ -37,5 +45,5 @@ Bottom tabs: **Memory** (editable chips with pin), **Skills/Tools** (toggles), *
 - Stop halts within a few seconds and is logged.
 
 ## Open questions
-- Does Hermes run on the same machine as junosd? (affects file access and latency)
+- Resolved: Hermes runs on a VPS (see Deployment). Open: file sync strategy for projects (git vs upload).
 - One Hermes or several named agents? Data model already allows many (`agent` table).

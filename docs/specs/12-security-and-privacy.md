@@ -8,6 +8,9 @@ Main risks, in order: (1) an agent doing something destructive or leaking data t
 - Strict CORS to the UI origin; reject requests with unexpected `Origin`/`Host` (blocks DNS rebinding and drive-by pages).
 - Remote access, if ever: only over a private network tunnel plus the same token.
 
+## Hermes on a VPS
+The VPS is a larger attack surface than localhost. Requirements: Hermes shim bound to the private interface only, firewall denies everything else, key-only SSH, bridge token in the keychain, Hermes runs as an unprivileged user, and its working directory is separate from anything holding secrets. Approvals (below) are enforced on the junosd side as well as by Hermes, so a compromised Hermes cannot approve itself.
+
 ## Credentials
 - JunOS stores **no provider passwords or tokens**. Logins stay in each official CLI's own store (see 03).
 - Any JunOS-owned secret (webhook tokens, Hermes bridge token) goes in the OS keychain, never in SQLite, logs, or the repo.
