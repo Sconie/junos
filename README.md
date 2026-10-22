@@ -34,7 +34,16 @@ npm run lint && npm run typecheck && npm run test && npm run build
 
 `npm test` runs the daemon API tests (fake provider CLIs) and the web shell smoke tests. `npm run build` builds every workspace that has a build.
 
-The sidebar pill shows the live junosd state, driven by the SSE stream (`/api/events`). `/api/health` and `/api/providers` are the other endpoints so far.
+The sidebar pill shows the live junosd state, driven by the SSE stream (`/api/events`).
+
+### Pairing and localhost protection
+
+Only a paired browser can use the API. On start junosd prints a one-time pairing code (also saved to `~/.junos/pairing-code.txt` until it is used, because a service has no console). Open the UI, type the code, and the browser gets an `HttpOnly`, `SameSite=Strict` session cookie. The session is stored hashed in SQLite, so it survives restarts. A code works once, expires after 10 minutes, and is replaced after 5 wrong guesses.
+
+- Every request must carry the daemon's own `Host`. A foreign `Origin` is rejected, and writes need an `Origin` plus the `x-junos-csrf` header.
+- Public routes: `GET /api/health` (name and version only), `GET /api/session`, `POST /api/pair`. Everything else needs the cookie.
+- When the dev UI runs on a port other than 5173, start junosd with `JUNOS_UI_ORIGINS=http://127.0.0.1:<port>`.
+- "Unpair" in the sidebar revokes the session. If it was the last one, a fresh code is announced.
 
 ## Running junosd as a service (Windows)
 

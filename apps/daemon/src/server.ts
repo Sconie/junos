@@ -9,7 +9,18 @@ import {
   type JunosEvent,
   type ProviderProbe,
   type ProvidersResponse,
+  type SessionResponse,
+  type StatusResponse,
 } from '@junos/shared'
+import {
+  Pairing,
+  RequestPolicy,
+  clearedSessionCookie,
+  createSession,
+  csrfOk,
+  sessionCookie,
+  sessionFromRequest,
+} from './auth.ts'
 import { acquireLock } from './lock.ts'
 import { probeProviders } from './providers.ts'
 import { EventStore } from './store.ts'
@@ -23,6 +34,13 @@ export interface DaemonOptions {
   host?: string
   env?: NodeJS.ProcessEnv
   heartbeatMs?: number
+  /** Extra browser origins allowed to call the API, e.g. the Vite dev server. */
+  uiOrigins?: string[]
+  /** Receives the one-time pairing code (null when it is used up). The owner reads it from here. */
+  onPairingCode?: (code: string | null, expiresAt: number | null) => void
+  /** Test hooks. */
+  now?: () => number
+  pairingTtlMs?: number
 }
 
 export interface Daemon {
@@ -30,6 +48,8 @@ export interface Daemon {
   readonly store: EventStore
   close(): Promise<void>
 }
+
+const DEFAULT_UI_ORIGINS = ['http://127.0.0.1:5173', 'http://localhost:5173']
 
 const VERSION = (
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -40,13 +60,39 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
+/** Reads a small JSON body; anything over 4 KB is refused. */
+function readJson(req: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks: Buffer[] = []
+    let tooLarge = false
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (tooLarge) return // keep draining so the client gets the 400 instead of a reset
+      if (size > 4096) {
+        tooLarge = true
+        chunks.length = 0
+        reject(new Error('too large'))
+      } else chunks.push(chunk)
+    })
+    req.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'))
+      } catch (err) {
+        reject(err)
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
 function sseFrame(event: JunosEvent): string {
   return `id: ${event.seq}\ndata: ${JSON.stringify(event)}\n\n`
 }
 
 export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const { home, host = '127.0.0.1', env = process.env, heartbeatMs = 5_000 } = options
-  mkdirSync(home, { recursive: true })
+  mkdirSync(home, { recursive: true, mode: 0o700 })
   const lock = acquireLock(home)
   let store: EventStore | undefined
   let server: Server | undefined
@@ -56,6 +102,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const startedAt = new Date()
     let probes: ProviderProbe[] = []
     const streams = new Set<ServerResponse>()
+    const streamOwner = new WeakMap<ServerResponse, string>()
+    const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })
 
     async function refreshProviders(): Promise<void> {
       const next = await probeProviders(env)
@@ -71,7 +119,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       probes = next
     }
 
-    function openStream(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    function openStream(req: IncomingMessage, res: ServerResponse, url: URL, sessionId: string): void {
+      streamOwner.set(res, sessionId)
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache, no-transform',
@@ -128,10 +177,51 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       write(`event: ready\ndata: ${JSON.stringify({ lastSeq: db.lastSeq() })}\n\n`)
     }
 
+    let policy: RequestPolicy | undefined
+
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
+      const write = req.method !== 'GET' && req.method !== 'HEAD'
+      if (!policy) return sendJson(res, 503, { error: 'starting' })
+
+      // 1. Who is this request for, and where did it come from? Applies to every route.
+      if (!policy.hostOk(req)) return sendJson(res, 403, { error: 'bad host' })
+      const origin = req.headers.origin
+      if (!policy.originOk(origin, write)) return sendJson(res, 403, { error: 'bad origin' })
+
+      // 2. Routes that work without a session.
       if (req.method === 'GET' && url.pathname === '/api/health') {
-        const body: HealthResponse = {
+        return sendJson(res, 200, { ok: true, name: 'junosd', version: VERSION } satisfies HealthResponse)
+      }
+      const session = sessionFromRequest(db, req)
+      if (req.method === 'GET' && url.pathname === '/api/session') {
+        return sendJson(res, 200, (session ? { paired: true, csrf: session.csrf } : { paired: false }) satisfies SessionResponse)
+      }
+      if (req.method === 'POST' && url.pathname === '/api/pair') {
+        readJson(req).then(
+          (body) => {
+            const code = typeof (body as { code?: unknown })?.code === 'string' ? (body as { code: string }).code : ''
+            const result = pairing.redeem(code)
+            if (result !== 'ok') {
+              db.append('auth.pair_failed', { reason: result })
+              return sendJson(res, 401, { error: result })
+            }
+            const created = createSession(db)
+            db.append('auth.paired', { sessionId: created.id })
+            res.setHeader('set-cookie', sessionCookie(created.token))
+            sendJson(res, 200, { paired: true, csrf: created.csrf } satisfies SessionResponse)
+          },
+          () => sendJson(res, 400, { error: 'bad request' }),
+        )
+        return
+      }
+
+      // 3. Everything else needs the paired browser's cookie, and writes also need its CSRF token.
+      if (!session) return sendJson(res, 401, { error: 'unauthorized' })
+      if (write && !csrfOk(session, req)) return sendJson(res, 403, { error: 'bad csrf' })
+
+      if (req.method === 'GET' && url.pathname === '/api/status') {
+        const body: StatusResponse = {
           ok: true,
           name: 'junosd',
           version: VERSION,
@@ -142,7 +232,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
         return sendJson(res, 200, body)
       }
-      if (req.method === 'GET' && url.pathname === '/api/events') return openStream(req, res, url)
+      if (req.method === 'GET' && url.pathname === '/api/events') return openStream(req, res, url, session.id)
       if (req.method === 'GET' && url.pathname === '/api/providers') {
         return sendJson(res, 200, { providers: probes } satisfies ProvidersResponse)
       }
@@ -152,6 +242,21 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           () => sendJson(res, 500, { error: 'probe failed' }),
         )
         return
+      }
+      if (req.method === 'POST' && url.pathname === '/api/pairing/code') {
+        // An already paired browser can mint a code to pair another one.
+        const { code, expiresAt } = pairing.issue()
+        return sendJson(res, 200, { code, expiresAt: new Date(expiresAt).toISOString() })
+      }
+      if (req.method === 'POST' && url.pathname === '/api/session/logout') {
+        db.revokeSession(session.id)
+        db.append('auth.revoked', { sessionId: session.id })
+        // A revoked session must stop receiving events at once, not when its stream happens to drop.
+        for (const stream of streams) if (streamOwner.get(stream) === session.id) stream.end()
+        // With no paired browser left, announce a fresh code so the owner is never locked out.
+        if (db.activeSessionCount() === 0) pairing.issue()
+        res.setHeader('set-cookie', clearedSessionCookie())
+        return sendJson(res, 200, { paired: false } satisfies SessionResponse)
       }
       sendJson(res, 404, { error: 'not found' })
     })
@@ -163,6 +268,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     })
     const port = (srv.address() as AddressInfo).port
     lock.setPort(port)
+    policy = new RequestPolicy(port, options.uiOrigins ?? DEFAULT_UI_ORIGINS)
+    pairing.issue()
     db.append('daemon.started', { version: VERSION, pid: process.pid, port })
     await refreshProviders()
 
