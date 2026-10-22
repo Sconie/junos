@@ -60,5 +60,6 @@ Bottom tabs: **Memory** (editable chips with pin), **Skills/Tools** (toggles), *
 
 ## Open questions
 - Resolved: Hermes runs on a VPS (see Deployment). Project files reach Hermes through **git** (Hermes clones the repo; changes come back as branches or PRs). Decided by Jonas, 2026-10-22.
+- Decided (Jonas, 2026-10-22): **no paid Hermes API**. The bridge only uses what costs nothing extra: the VPS terminal/CLI, the shipped web UI, and Telegram. If the web UI's API turns out to bill per use, JunOS does not use it. Tailscale is not set up yet; it is a prerequisite for the real shim (Phase 3), so until then the bridge runs against the mock only.
 - One Hermes for now (assumed, 2026-10-22); the data model already allows many (`agent` table).
 - Resolved partly: Hermes exposes a VPS terminal (CLI) and its own web UI besides Telegram. Open: the web UI's API/auth, whether to embed it in the JunOS console as a panel, and where memory lives in the volume.
