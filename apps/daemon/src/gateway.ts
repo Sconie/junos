@@ -254,10 +254,19 @@ export class Gateway {
 
   list(status?: ApprovalStatus): ApprovalRecord[] {
     this.sweepExpired()
+    // A still-pending approval has to stay listed until it is decided or expires. Capping the mixed
+    // history at 200 lets newer consumed, denied, or expired rows push it out of the inbox.
     const rows = (
       status
         ? this.#store.db.prepare('SELECT * FROM approval WHERE status = ? ORDER BY requested_at DESC LIMIT 200').all(status)
-        : this.#store.db.prepare('SELECT * FROM approval ORDER BY requested_at DESC LIMIT 200').all()
+        : this.#store.db
+            .prepare(
+              `SELECT * FROM (SELECT * FROM approval WHERE status = 'pending' ORDER BY requested_at DESC LIMIT 200)
+               UNION ALL
+               SELECT * FROM (SELECT * FROM approval WHERE status != 'pending' ORDER BY requested_at DESC LIMIT 200)
+               ORDER BY requested_at DESC`,
+            )
+            .all()
     ) as unknown as ApprovalRow[]
     return rows.map(toRecord)
   }

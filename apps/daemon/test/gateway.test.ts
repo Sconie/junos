@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { afterEach, describe, it } from 'node:test'
 import type { ActionResponse, ApprovalRecord, GatewayInfo } from '@junos/shared'
 import { boot, tempHome, type Browser, type BootOptions, type TestDaemon } from './harness.ts'
@@ -339,6 +340,26 @@ describe('audit and redaction', () => {
     assert.equal(a.irreversible, true)
     assert.ok(a.expiresAt > a.requestedAt)
     assert.match(a.digest, /^[0-9a-f]{64}$/)
+  })
+})
+
+describe('approval list', () => {
+  it('keeps an older pending approval listed after newer resolved rows fill the cap', async () => {
+    const { d, ask, approvals } = await setup()
+    const id = await ask(send())
+    d.store.db.prepare(`UPDATE approval SET requested_at = ? WHERE id = ?`).run('2020-01-01T00:00:00.000Z', id)
+    const insert = d.store.db.prepare(
+      `INSERT INTO approval (id, run_id, action_digest, action_json, class, project_id, status, requested_at, expires_at)
+       VALUES (?, NULL, ?, ?, 'external-send', NULL, 'denied', ?, ?)`,
+    )
+    const shown = JSON.stringify({ actor: 'ui', tool: 'test.send', target: 'a@example.com', args: {} })
+    for (let i = 0; i < 200; i++) {
+      const requestedAt = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString()
+      insert.run(randomUUID(), 'd'.repeat(64), shown, requestedAt, '2099-01-01T00:00:00.000Z')
+    }
+    const listed = await approvals()
+    assert.equal(listed.filter((a) => a.status === 'pending').map((a) => a.id).join(','), id)
+    assert.equal(listed.filter((a) => a.status === 'denied').length, 200)
   })
 })
 
