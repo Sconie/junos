@@ -169,7 +169,8 @@ export class RunManager {
       )
       .run(status, new Date(this.#now()).toISOString(), info.exitCode ?? null, info.signal ?? null, info.error ?? null, id)
     if (Number(res.changes) !== 1) return
-    const sideEffects = status === 'stopped' ? this.#recordSideEffects(id) : []
+    // Spec 12: anything already executed is part of the stop record, confirmed or not.
+    const sideEffects = status === 'stopped' || status === 'stop_unconfirmed' ? this.#recordSideEffects(id) : []
     this.#store.append(
       `run.${status === 'stop_unconfirmed' ? 'stop_unconfirmed' : status}`,
       { runId: id, status, exitCode: info.exitCode ?? null, signal: info.signal ?? null, sideEffects: sideEffects.length },
@@ -210,10 +211,12 @@ export class RunManager {
     void this.#signal(pid, false)
     const polite = await Promise.race([entry.exited.then(() => true), sleep(this.#graceMs).then(() => false)])
     if (!polite) {
-      void this.#signal(pid, true)
+      // `signal` resolves only once the kill has been delivered. On Windows that is when
+      // taskkill exits; starting the confirm timer earlier freezes a false `stop_unconfirmed`.
+      await this.#signal(pid, true)
       await Promise.race([entry.exited, sleep(this.#confirmMs)])
     }
-    if (this.#children.has(id) || alive(pid)) {
+    if (this.#survived(id, pid)) {
       // We asked twice and it is still there. Say so instead of claiming it stopped.
       this.#finish(id, 'stop_unconfirmed', { error: 'process did not exit after a forced kill' })
     }
@@ -233,9 +236,22 @@ export class RunManager {
         const pid = entry.child.pid
         if (pid !== undefined) await this.#signal(pid, true)
         await Promise.race([entry.exited, sleep(this.#confirmMs)])
-        this.#finish(id, 'stopped', { error: 'junosd shut down' })
+        // Detached children do not die with us. A survivor must not be stored as a clean stop:
+        // the next start only rewrites running and cancelling rows.
+        const survived = this.#survived(id, pid)
+        this.#finish(id, survived ? 'stop_unconfirmed' : 'stopped', {
+          error: survived ? 'process did not exit after a forced kill' : 'junosd shut down',
+        })
       }),
     )
+  }
+
+  /**
+   * Still our child, and the OS still has the pid. The map entry lives until `exit`, so it is not
+   * proof of life: a kill that already landed must not be recorded as `stop_unconfirmed`.
+   */
+  #survived(id: string, pid: number | undefined): boolean {
+    return pid !== undefined && this.#children.has(id) && alive(pid)
   }
 
   list(limit = 50): RunRecord[] {

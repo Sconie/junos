@@ -4,6 +4,31 @@ import { useAuth } from '../lib/auth'
 import { useDaemon } from '../lib/daemon'
 
 const HOUR_MS = 60 * 60 * 1000
+// One Stop writes every `stopRequestedAt` before it waits, so they land together. A later Stop must
+// not replay an earlier run's side effects just because those rows are still in the list.
+const SAME_STOP_MS = 1000
+
+function stopStamp(run: RunRecord): number | null {
+  const raw = run.stopRequestedAt ?? run.finishedAt
+  if (!raw) return null
+  const t = Date.parse(raw)
+  return Number.isFinite(t) ? t : null
+}
+
+function latestStoppedWithEffects(runs: RunRecord[]): RunRecord[] {
+  let latest = Number.NEGATIVE_INFINITY
+  for (const run of runs) {
+    if (run.status !== 'stopped') continue
+    const t = stopStamp(run)
+    if (t !== null && t > latest) latest = t
+  }
+  if (!Number.isFinite(latest)) return []
+  return runs.filter((run) => {
+    if (run.status !== 'stopped' || run.sideEffects.length === 0) return false
+    const t = stopStamp(run)
+    return t !== null && latest - t <= SAME_STOP_MS
+  })
+}
 
 /**
  * Always in the top bar. Hidden when nothing runs; otherwise the one big way to halt everything.
@@ -55,7 +80,7 @@ export default function StopControl() {
   const unconfirmed = state.runs.filter(
     (r) => r.status === 'stop_unconfirmed' && r.finishedAt && snap.at - Date.parse(r.finishedAt) < HOUR_MS,
   )
-  const lastStopped = state.runs.filter((r) => r.status === 'stopped' && r.sideEffects.length > 0)
+  const lastStopped = latestStoppedWithEffects(state.runs)
 
   if (unconfirmed.length > 0) {
     return (
@@ -64,10 +89,21 @@ export default function StopControl() {
         <span>
           {unconfirmed.length} {unconfirmed.length === 1 ? 'process' : 'processes'} may still be running. Check the machine.
         </span>
-        {state.paused && (
-          <button type="button" disabled={busy} onClick={() => void call('/resume')}>
-            Resume
+        <SideEffects runs={unconfirmed} />
+        {cancelling.length > 0 ? (
+          <button type="button" className="stop-btn" disabled>
+            Stopping…
           </button>
+        ) : running.length > 0 ? (
+          <button type="button" className="stop-btn" disabled={busy} onClick={() => void call('/stop')}>
+            Stop · {running.length} running
+          </button>
+        ) : (
+          state.paused && (
+            <button type="button" disabled={busy} onClick={() => void call('/resume')}>
+              Resume
+            </button>
+          )
         )}
       </div>
     )

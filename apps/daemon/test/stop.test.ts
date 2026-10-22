@@ -253,6 +253,29 @@ describe('who may stop', () => {
 })
 
 describe('shutdown and restart', () => {
+  it('does not record a survivor of shutdown as a clean stop', async () => {
+    const { home, cleanup } = tempHome()
+    cleanups.push(cleanup)
+    const store = new EventStore(join(home, 'junos.db'))
+    cleanups.push(() => store.close())
+    const gateway = new Gateway({ store, tools: [] })
+    const runs = new RunManager({ store, gateway, confirmMs: 40, signal: async () => {} })
+    const run = runs.start({ kind: 'test', source: 'test', command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] })
+    const pid = runs.pid(run.id)!
+    cleanups.push(async () => {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        /* gone */
+      }
+      await waitDead(pid)
+    })
+    await runs.closeAll()
+    assert.equal(runs.get(run.id)?.status, 'stop_unconfirmed')
+    assert.ok(alive(pid), 'the process really did outlive the shutdown kill')
+    assert.equal(store.since(0).some((e) => e.type === 'run.stopped'), false)
+  })
+
   it('kills child processes when the daemon shuts down', async () => {
     const { home, cleanup } = tempHome()
     cleanups.push(cleanup)
@@ -291,6 +314,44 @@ describe('shutdown and restart', () => {
 })
 
 describe('when a process will not die', () => {
+  it('waits for a force-kill that is still starting instead of freezing stop_unconfirmed', async () => {
+    const { home, cleanup } = tempHome()
+    cleanups.push(cleanup)
+    const store = new EventStore(join(home, 'junos.db'))
+    cleanups.push(() => store.close())
+    const gateway = new Gateway({ store, tools: [] })
+    const runs = new RunManager({
+      store,
+      gateway,
+      graceMs: 30,
+      confirmMs: 40,
+      signal: async (pid, force) => {
+        if (!force) return
+        // Longer than confirmMs, standing in for taskkill that has not exited yet.
+        await sleep(200)
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* gone */
+        }
+      },
+    })
+    const run = runs.start({ kind: 'test', source: 'test', command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] })
+    const pid = runs.pid(run.id)!
+    cleanups.push(async () => {
+      try {
+        process.kill(pid, 'SIGKILL')
+      } catch {
+        /* gone */
+      }
+      await waitDead(pid)
+    })
+    const done = await runs.stop(run.id)
+    assert.equal(done[0]?.status, 'stopped')
+    assert.equal(await waitDead(pid), true)
+    assert.equal(store.since(0).some((e) => e.type === 'run.stop_unconfirmed'), false)
+  })
+
   it('says "stop not confirmed" instead of claiming it stopped', async () => {
     const { home, cleanup } = tempHome()
     cleanups.push(cleanup)
@@ -311,10 +372,22 @@ describe('when a process will not die', () => {
       await waitDead(pid)
       await sleep(100)
     })
+    store.append('gateway.executed', {
+      digest: 'ab'.repeat(32),
+      tool: 'test.write',
+      class: 'write-local',
+      target: '/work/a.txt',
+      result: 'ok',
+      runId: run.id,
+    })
     const done = await runs.stop(run.id)
     assert.equal(done[0]?.status, 'stop_unconfirmed')
     assert.match(done[0]?.error ?? '', /did not exit/)
-    assert.ok(store.since(0).some((e) => e.type === 'run.stop_unconfirmed'))
+    assert.equal(done[0]?.sideEffects.length, 1)
+    assert.equal(done[0]?.sideEffects[0]?.tool, 'test.write')
+    const recorded = store.since(0).find((e) => e.type === 'run.stop_unconfirmed')
+    assert.ok(recorded)
+    assert.equal(recorded?.payload.sideEffects, 1)
     assert.ok(alive(pid))
   })
 })

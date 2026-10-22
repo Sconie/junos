@@ -90,6 +90,49 @@ describe('StopControl', () => {
     expect(screen.queryByText('Stopped')).toBeNull()
   })
 
+  it('still offers Stop when a sibling is running after one run could not be confirmed', async () => {
+    mockDaemon({
+      paused: false,
+      runs: [
+        run({ status: 'stop_unconfirmed', finishedAt: new Date().toISOString() }),
+        run({ id: '22222222-2222-4222-8222-222222222222', status: 'running' }),
+      ],
+    })
+    render(<StopControl />)
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Stop · 1 running' })).toBeTruthy()
+  })
+
+  it('keeps Stopping… when one run is unconfirmed and another is still cancelling', async () => {
+    mockDaemon({
+      paused: true,
+      runs: [
+        run({ status: 'stop_unconfirmed', finishedAt: new Date().toISOString() }),
+        run({ id: '22222222-2222-4222-8222-222222222222', status: 'cancelling' }),
+      ],
+    })
+    render(<StopControl />)
+    expect(await screen.findByRole('button', { name: 'Stopping…' })).toBeTruthy()
+    expect(screen.getByRole('alert').textContent).toContain('Stop not confirmed')
+  })
+
+  it('lists actions that already ran when the stop could not be confirmed', async () => {
+    mockDaemon({
+      paused: true,
+      runs: [
+        run({
+          status: 'stop_unconfirmed',
+          finishedAt: new Date().toISOString(),
+          sideEffects: [{ digest: 'b'.repeat(64), tool: 'mail.send', class: 'external-send', target: 'bob@example.com' }],
+        }),
+      ],
+    })
+    render(<StopControl />)
+    expect(await screen.findByText('1 action had already run')).toBeTruthy()
+    expect(screen.getByText('mail.send')).toBeTruthy()
+    expect(screen.getByText(/bob@example.com/)).toBeTruthy()
+  })
+
   it('lists actions that had already run, because they cannot be undone', async () => {
     mockDaemon({
       paused: true,
@@ -105,5 +148,58 @@ describe('StopControl', () => {
     expect(await screen.findByText('1 action had already run')).toBeTruthy()
     expect(screen.getByText('mail.send')).toBeTruthy()
     expect(screen.getByText(/alice@example.com/)).toBeTruthy()
+  })
+
+  it('lists side effects from every run in the latest stop', async () => {
+    const at = new Date().toISOString()
+    mockDaemon({
+      paused: true,
+      runs: [
+        run({
+          status: 'stopped',
+          stopRequestedAt: at,
+          finishedAt: at,
+          sideEffects: [{ digest: 'a'.repeat(64), tool: 'mail.send', class: 'external-send', target: 'alice@example.com' }],
+        }),
+        run({
+          id: '22222222-2222-4222-8222-222222222222',
+          status: 'stopped',
+          stopRequestedAt: at,
+          finishedAt: at,
+          sideEffects: [{ digest: 'c'.repeat(64), tool: 'test.write', class: 'write-local', target: '/work/a.txt' }],
+        }),
+      ],
+    })
+    render(<StopControl />)
+    expect(await screen.findByText('2 actions had already run')).toBeTruthy()
+    expect(screen.getByText('mail.send')).toBeTruthy()
+    expect(screen.getByText('test.write')).toBeTruthy()
+  })
+
+  it('does not list side effects from an earlier stop on the next pause', async () => {
+    const earlier = new Date(Date.now() - 60_000).toISOString()
+    const later = new Date().toISOString()
+    mockDaemon({
+      paused: true,
+      runs: [
+        run({
+          status: 'stopped',
+          stopRequestedAt: earlier,
+          finishedAt: earlier,
+          sideEffects: [{ digest: 'a'.repeat(64), tool: 'mail.send', class: 'external-send', target: 'alice@example.com' }],
+        }),
+        run({
+          id: '22222222-2222-4222-8222-222222222222',
+          status: 'stopped',
+          stopRequestedAt: later,
+          finishedAt: later,
+          sideEffects: [],
+        }),
+      ],
+    })
+    render(<StopControl />)
+    expect(await screen.findByText('Stopped')).toBeTruthy()
+    expect(screen.queryByText('mail.send')).toBeNull()
+    expect(screen.queryByText(/had already run/)).toBeNull()
   })
 })
