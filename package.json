@@ -8,10 +8,10 @@
   "scripts": {
     "dev:web": "npm run dev -w @junos/web",
     "dev:daemon": "npm run start -w @junos/daemon",
-    "build": "npm run build -w @junos/web",
+    "build": "npm run build --workspaces --if-present",
     "typecheck": "tsc -b apps/daemon packages/shared && tsc -b apps/web",
     "lint": "oxlint",
-    "test": "npm test -w @junos/daemon"
+    "test": "npm test --workspaces --if-present"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

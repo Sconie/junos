@@ -29,9 +29,10 @@ Needs Node 24 or newer.
 npm install
 npm run dev:daemon   # junosd on http://127.0.0.1:4777, data in ~/.junos (JUNOS_HOME, JUNOS_PORT override)
 npm run dev:web      # UI on http://localhost:5173, proxies /api to junosd
-npm test             # API tests against fake provider CLIs
-npm run typecheck && npm run lint
+npm run lint && npm run typecheck && npm run test && npm run build
 ```
+
+`npm test` runs the daemon API tests (fake provider CLIs) and the web shell smoke tests. `npm run build` builds every workspace that has a build.
 
 The sidebar pill shows the live junosd state, driven by the SSE stream (`/api/events`). `/api/health` and `/api/providers` are the other endpoints so far.
 
