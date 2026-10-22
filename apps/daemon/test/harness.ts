@@ -34,6 +34,8 @@ export interface BootOptions {
   approvalTtlMs?: number
   autonomy?: 'ask-first' | 'balanced' | 'autonomous'
   testTools?: boolean
+  stopGraceMs?: number
+  stopConfirmMs?: number
 }
 
 export type TestDaemon = Daemon & {
@@ -57,6 +59,8 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     approvalTtlMs: options.approvalTtlMs,
     autonomy: options.autonomy,
     testTools: options.testTools ?? false,
+    stopGraceMs: options.stopGraceMs ?? 300,
+    stopConfirmMs: options.stopConfirmMs ?? 1500,
     onPairingCode: (c) => {
       announced = c
     },

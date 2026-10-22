@@ -11,6 +11,7 @@ import {
   type ActionRequest,
   type ApprovalStatus,
   type ProviderProbe,
+  type RunsResponse,
   type ProvidersResponse,
   type SessionResponse,
   type StatusResponse,
@@ -26,6 +27,7 @@ import {
 } from './auth.ts'
 import { Gateway, testTools, type Autonomy } from './gateway.ts'
 import { acquireLock } from './lock.ts'
+import { FAKE_RUNS, PausedError, RunManager } from './runs.ts'
 import { probeProviders } from './providers.ts'
 import { EventStore } from './store.ts'
 
@@ -49,6 +51,9 @@ export interface DaemonOptions {
   autonomy?: Autonomy
   /** Registers the fake test.* tools (never in a normal run). Also JUNOS_TEST_TOOLS=1. */
   testTools?: boolean
+  /** Stop timing: polite-cancel grace and post-kill confirmation window. */
+  stopGraceMs?: number
+  stopConfirmMs?: number
 }
 
 export interface Daemon {
@@ -57,6 +62,7 @@ export interface Daemon {
   close(): Promise<void>
 }
 
+const RUN_STOP_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stop$')
 const APPROVAL_PATH = new RegExp('^/api/approvals/([0-9a-f-]{36})(?:/(approve|deny))?$')
 
 const DEFAULT_UI_ORIGINS = ['http://127.0.0.1:5173', 'http://localhost:5173']
@@ -114,6 +120,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const streams = new Set<ServerResponse>()
     const testToolsOn = options.testTools ?? env.JUNOS_TEST_TOOLS === '1'
     const testEffects: Array<Record<string, unknown>> = []
+    let runs: RunManager | undefined
     const gateway = new Gateway({
       store: db,
       tools: testToolsOn ? testTools(testEffects) : [],
@@ -121,7 +128,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       approvalTtlMs: options.approvalTtlMs,
       autonomy: options.autonomy,
       testTools: testToolsOn,
+      isPaused: () => runs?.paused ?? false,
     })
+    runs = new RunManager({ store: db, gateway, graceMs: options.stopGraceMs, confirmMs: options.stopConfirmMs, now: options.now })
+    const runMgr = runs
     const sweeper = setInterval(() => gateway.sweepExpired(), 30_000)
     sweeper.unref()
     const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })
@@ -263,6 +273,50 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         )
         return
       }
+      if (req.method === 'GET' && url.pathname === '/api/runs') {
+        return sendJson(res, 200, { paused: runMgr.paused, runs: runMgr.list() } satisfies RunsResponse)
+      }
+      if (req.method === 'POST' && url.pathname === '/api/stop') {
+        // Stop everything and pause. Resolves when each run is stopped, or honestly "not confirmed".
+        runMgr.stop().then(
+          () => sendJson(res, 200, { paused: runMgr.paused, runs: runMgr.list() } satisfies RunsResponse),
+          () => sendJson(res, 500, { error: 'stop failed' }),
+        )
+        return
+      }
+      if (req.method === 'POST' && url.pathname === '/api/resume') {
+        runMgr.resume()
+        return sendJson(res, 200, { paused: runMgr.paused, runs: runMgr.list() } satisfies RunsResponse)
+      }
+      const runStop = RUN_STOP_PATH.exec(url.pathname)
+      if (req.method === 'POST' && runStop) {
+        if (!runMgr.get(runStop[1]!)) return sendJson(res, 404, { error: 'not found' })
+        runMgr.stop(runStop[1]!).then(
+          (done) => sendJson(res, 200, { run: done[0] }),
+          () => sendJson(res, 500, { error: 'stop failed' }),
+        )
+        return
+      }
+      if (req.method === 'POST' && url.pathname === '/api/test/runs' && testToolsOn) {
+        readJson(req).then(
+          (body) => {
+            const kind = (body as { kind?: unknown } | null)?.kind
+            if (typeof kind !== 'string' || !(kind in FAKE_RUNS)) return sendJson(res, 400, { error: 'bad kind' })
+            const pidDir = join(home, 'pids')
+            mkdirSync(pidDir, { recursive: true })
+            const pidFile = join(pidDir, `${kind}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.pid`)
+            try {
+              const run = runMgr.start({ kind: `test.${kind}`, source: 'test', command: process.execPath, args: FAKE_RUNS[kind]!(pidFile) })
+              sendJson(res, 201, { run, pidFile, pid: runMgr.pid(run.id) })
+            } catch (err) {
+              if (err instanceof PausedError) return sendJson(res, 409, { error: 'paused' })
+              sendJson(res, 500, { error: 'could not start' })
+            }
+          },
+          () => sendJson(res, 400, { error: 'bad request' }),
+        )
+        return
+      }
       if (req.method === 'GET' && url.pathname === '/api/gateway/info') return sendJson(res, 200, gateway.info())
       if (req.method === 'GET' && url.pathname === '/api/gateway/test-effects' && testToolsOn) {
         return sendJson(res, 200, { effects: testEffects })
@@ -344,6 +398,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       close() {
         closing ??= (async () => {
           clearInterval(sweeper)
+          await runMgr.closeAll()
           for (const res of streams) res.end()
           await new Promise<void>((resolve) => {
             srv.close(() => resolve())

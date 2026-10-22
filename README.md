@@ -51,6 +51,10 @@ Every side effect goes through the gateway (`POST /api/actions`). The daemon cla
 
 To try it by hand, start junosd with `JUNOS_TEST_TOOLS=1`: the Approvals screen then shows a test panel with fake send, delete and spend tools that only record into memory.
 
+### Stop
+
+Every process JunOS starts is a run owned by the run manager. The **Stop** button in the top bar (visible whenever something runs) halts everything: it pauses new runs and every action except reads, revokes the stopped runs' pending approvals, asks each process tree to cancel, and force-kills it after a 5 s grace (`taskkill /T` on Windows, the process group on Linux and macOS). The outcome is `stopped`, or an honest `stop not confirmed` if a process survives the kill. Actions that had already completed are listed, since they cannot be undone. Events: `stop.requested`, `run.cancelling`, `run.stopped` / `run.stop_unconfirmed`, `stop.resumed`. Nothing outlives junosd: a shutdown kills its children, and runs a dead daemon left behind are marked failed on the next start. "Resume" lifts the pause.
+
 ## Running junosd as a service (Windows)
 
 `scripts/install-service.ps1` registers a per-user scheduled task that starts junosd at logon; `scripts/uninstall-service.ps1` removes it. Stop junosd with Ctrl+C, SIGTERM, or by ending the task. A hard kill leaves a stale `junosd.lock`, which the next start takes over; SQLite runs in WAL mode so the event history survives.

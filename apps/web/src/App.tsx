@@ -6,6 +6,7 @@ import Hermes from './pages/Hermes'
 import Files from './pages/Files'
 import Connections from './pages/Connections'
 import Approvals from './pages/Approvals'
+import StopControl from './components/StopControl'
 import { DaemonBanner, DaemonStatus } from './lib/daemon'
 
 const nav = [
@@ -34,6 +35,9 @@ export default function App() {
         <DaemonStatus />
       </aside>
       <main className="content">
+        <div className="topbar">
+          <StopControl />
+        </div>
         <DaemonBanner />
         <Routes>
           <Route path="/" element={<Overview />} />

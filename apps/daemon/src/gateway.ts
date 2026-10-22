@@ -8,6 +8,7 @@ import {
   type ApprovalRecord,
   type ApprovalStatus,
   type GatewayInfo,
+  type SideEffect,
 } from '@junos/shared'
 import { actionDigest, redact, type ActionRecord } from './canonical.ts'
 import type { EventStore } from './store.ts'
@@ -30,6 +31,8 @@ export interface GatewayOptions {
   approvalTtlMs?: number
   autonomy?: Autonomy
   testTools?: boolean
+  /** While true (after Stop) nothing but reads may run. */
+  isPaused?: () => boolean
 }
 
 interface ApprovalRow {
@@ -65,6 +68,7 @@ export class Gateway {
   readonly #ttlMs: number
   readonly #autonomy: Autonomy
   readonly #testTools: boolean
+  readonly #isPaused: () => boolean
 
   constructor(options: GatewayOptions) {
     this.#store = options.store
@@ -73,6 +77,7 @@ export class Gateway {
     this.#ttlMs = options.approvalTtlMs ?? 30 * 60_000
     this.#autonomy = options.autonomy ?? 'balanced'
     this.#testTools = options.testTools ?? false
+    this.#isPaused = options.isPaused ?? (() => false)
   }
 
   info(): GatewayInfo {
@@ -107,12 +112,18 @@ export class Gateway {
     }
     const digest = actionDigest(record)
     const audit = (type: string, extra: Record<string, unknown> = {}) =>
-      this.#store.append(type, { digest, tool: req.tool, class: cls, target: redact(record.target), actor, ...extra })
+      this.#store.append(type, { digest, tool: req.tool, class: cls, target: redact(record.target), actor, runId: req.runId ?? null, ...extra })
 
     if (!tool) {
       // Nothing is registered to run it, so it cannot run, approved or not.
       audit('gateway.decision', { decision: 'deny', reason: 'unknown_tool' })
       return { status: 'denied', digest, class: cls, reason: 'unknown_tool' }
+    }
+
+    if (cls !== 'read' && this.#isPaused()) {
+      // After Stop nothing with an effect runs, approved or not, until the owner resumes.
+      audit('gateway.decision', { decision: 'deny', reason: 'paused' })
+      return { status: 'denied', digest, class: cls, reason: 'paused' }
     }
 
     if (this.#decide(cls) === 'allow') {
@@ -230,6 +241,36 @@ export class Gateway {
     }
     this.#store.append(`approval.${to === 'approved' ? 'approved' : 'denied'}`, { approvalId: id, digest: row!.action_digest, by, channel }, id)
     return { ok: true, approval: toRecord(row!) }
+  }
+
+  /** Stop: a stopped run's pending and approved-but-unused approvals can no longer be used. */
+  revokeForRun(runId: string, by: string): number {
+    const rows = this.#store.db
+      .prepare(`SELECT id, action_digest FROM approval WHERE run_id = ? AND status IN ('pending','approved')`)
+      .all(runId) as Array<{ id: string; action_digest: string }>
+    const now = iso(this.#now())
+    let revoked = 0
+    for (const row of rows) {
+      const res = this.#store.db
+        .prepare(`UPDATE approval SET status = 'denied', decided_by = ?, decided_channel = 'stop', decided_at = ? WHERE id = ? AND status IN ('pending','approved')`)
+        .run(`system:${by}`, now, row.id)
+      if (Number(res.changes) === 1) {
+        revoked += 1
+        this.#store.append('approval.denied', { approvalId: row.id, digest: row.action_digest, by: `system:${by}`, channel: 'stop', reason: 'run_stopped' }, row.id)
+      }
+    }
+    return revoked
+  }
+
+  /** Effects the gateway already completed for a run (they cannot be undone), for the stop record. */
+  sideEffectsForRun(runId: string): SideEffect[] {
+    const rows = this.#store.db
+      .prepare(`SELECT payload_json FROM event WHERE type = 'gateway.executed' AND json_extract(payload_json, '$.runId') = ? ORDER BY seq`)
+      .all(runId) as Array<{ payload_json: string }>
+    return rows
+      .map((r) => JSON.parse(r.payload_json) as { digest: string; tool: string; class: ActionClass; target: string; result: string })
+      .filter((p) => p.result === 'ok')
+      .map((p) => ({ digest: p.digest, tool: p.tool, class: p.class, target: p.target }))
   }
 
   /** Marks pending and approved-but-unused approvals past their expiry as expired. */
