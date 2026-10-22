@@ -14,7 +14,7 @@ One triage queue for everything that needs Jonas or that finished while he was a
 | digest | daily/weekly summary | Open |
 
 ### Screen (matches mockup)
-Left filters (All, Needs me, Approvals, Findings, Results, Failures, Snoozed, Done) with counts. Middle list (title, source icon, age, priority). Right detail pane with full body, linked run or card, and the actions above. Keyboard first: `j/k` move, `e` done, `s` snooze, `a` approve, `d` deny, `c` make card, `/` search.
+Left filters (All, Needs me, Approvals, Findings, Results, Failures, Snoozed, Done) with counts. Middle list (title, source icon, age, priority). Right detail pane with full body, linked run or card, and the actions above. Keyboard first: `j/k` move, `e` done, `s` snooze, `c` make card (approve and deny are keyboard-enabled only inside the focused approval detail, never on list rows), `/` search.
 
 ### Rules
 - Priorities: `urgent` (blocked approvals), `normal`, `low` (digests). Urgent raises a desktop notification.
