@@ -51,6 +51,20 @@ const MIGRATIONS = [
      consumed_at TEXT
    );
    CREATE INDEX approval_status ON approval (status, requested_at)`,
+  // Runs (spec 02), plus what a stop needs to record.
+  `CREATE TABLE run (
+     id TEXT PRIMARY KEY,
+     kind TEXT NOT NULL,
+     source TEXT NOT NULL,
+     status TEXT NOT NULL,
+     started_at TEXT NOT NULL,
+     finished_at TEXT,
+     exit_code INTEGER,
+     signal TEXT,
+     error TEXT,
+     stop_requested_at TEXT,
+     side_effects_json TEXT NOT NULL DEFAULT '[]'
+   )`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */

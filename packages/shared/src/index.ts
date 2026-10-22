@@ -123,3 +123,40 @@ export interface GatewayInfo {
   testTools: boolean
   tools: Array<{ name: string; class: ActionClass }>
 }
+
+// ---- Runs and Stop (spec 12, 14) ----
+
+export const RUN_STATUSES = ['running', 'cancelling', 'stopped', 'finished', 'failed', 'stop_unconfirmed'] as const
+export type RunStatus = (typeof RUN_STATUSES)[number]
+
+/** An action that had already completed when a run was stopped. It cannot be undone. */
+export interface SideEffect {
+  digest: string
+  tool: string
+  class: ActionClass
+  target: string
+}
+
+export interface RunRecord {
+  id: string
+  kind: string
+  source: string
+  status: RunStatus
+  startedAt: string
+  finishedAt: string | null
+  exitCode: number | null
+  signal: string | null
+  error: string | null
+  /** Set once a stop was requested for this run. */
+  stopRequestedAt: string | null
+  /** Completed side effects, listed when a run is stopped. */
+  sideEffects: SideEffect[]
+}
+
+export interface RunsResponse {
+  /** While true no new run may start and the gateway refuses everything but reads. */
+  paused: boolean
+  /** When the current Stop began (null when not stopped), so only that stop's side effects are shown. */
+  pausedAt: string | null
+  runs: RunRecord[]
+}

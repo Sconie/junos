@@ -172,4 +172,15 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .approval[data-status="expired"], .approval[data-status="denied"], .approval[data-status="consumed"] { opacity: 0.75; }
 .dev-panel { margin-top: 24px; }
 @media (max-width: 720px) { .approvals-layout { grid-template-columns: 1fr; } }
+
+/* top bar and Stop */
+.topbar { display: flex; justify-content: flex-end; align-items: flex-start; flex-wrap: wrap; gap: 10px; min-height: 40px; margin: -8px 0 8px; }
+.stop { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.stop-btn { background: var(--bad); border-color: var(--bad); color: #1a0b0b; font-weight: 700; }
+.stop-btn:disabled { opacity: 0.7; }
+.stop-warn { padding: 8px 14px; border: 1px solid var(--warn); border-radius: var(--radius); background: var(--panel); }
+.stop-warn b { color: var(--warn); }
+.stop-stopped { padding: 8px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.stop-effects { font-size: 13px; color: var(--text-dim); }
+.stop-effects ul { margin: 6px 0 0; padding-left: 18px; }
 .daemon-unpair-error { color: var(--warn); font-size: 12px; }
