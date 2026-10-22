@@ -11,6 +11,17 @@ export interface RunSpec {
   args: string[]
   cwd?: string
   env?: NodeJS.ProcessEnv
+  /** What this run asks of a provider, recorded on the run. */
+  provider?: string
+  model?: string
+  effort?: string
+  /** Written to the process's stdin, then stdin is closed (prompts go here, never on the command line). */
+  stdin?: string
+  /** Receives the process's stdout and stderr as they arrive. Without these, output is discarded. */
+  onStdout?: (chunk: string) => void
+  onStderr?: (chunk: string) => void
+  /** Called once, after the run row reached its final status. */
+  onEnd?: (run: RunRecord) => void
 }
 
 export class PausedError extends Error {
@@ -35,6 +46,9 @@ interface RunRow {
   id: string
   kind: string
   source: string
+  provider: string | null
+  model: string | null
+  effort: string | null
   status: RunStatus
   started_at: string
   finished_at: string | null
@@ -85,6 +99,7 @@ export class RunManager {
   readonly #now: () => number
   readonly #signal: (pid: number, force: boolean) => Promise<void>
   readonly #children = new Map<string, { child: ChildProcess; exited: Promise<void> }>()
+  readonly #onEnd = new Map<string, (run: RunRecord) => void>()
   #paused = false
 
   constructor(options: RunManagerOptions) {
@@ -114,13 +129,14 @@ export class RunManager {
     const id = randomUUID()
     const startedAt = new Date(this.#now()).toISOString()
     this.#store.db
-      .prepare(`INSERT INTO run (id, kind, source, status, started_at) VALUES (?, ?, ?, 'running', ?)`)
-      .run(id, spec.kind, spec.source, startedAt)
+      .prepare(`INSERT INTO run (id, kind, source, provider, model, effort, status, started_at) VALUES (?, ?, ?, ?, ?, ?, 'running', ?)`)
+      .run(id, spec.kind, spec.source, spec.provider ?? null, spec.model ?? null, spec.effort ?? null, startedAt)
 
+    const piped = spec.stdin !== undefined || spec.onStdout !== undefined || spec.onStderr !== undefined
     const child = spawn(spec.command, spec.args, {
       cwd: spec.cwd,
       env: spec.env,
-      stdio: 'ignore',
+      stdio: piped ? ['pipe', 'pipe', 'pipe'] : 'ignore',
       windowsHide: true,
       // Its own process group on POSIX, so Stop can signal the whole tree.
       detached: process.platform !== 'win32',
@@ -146,6 +162,17 @@ export class RunManager {
         resolve()
       })
     })
+    if (piped) {
+      child.stdout?.setEncoding('utf8')
+      child.stderr?.setEncoding('utf8')
+      child.stdout?.on('data', (c: string) => spec.onStdout?.(c))
+      child.stderr?.on('data', (c: string) => spec.onStderr?.(c))
+      // A process that exits before reading its prompt closes the pipe; that is not our error.
+      child.stdin?.on('error', () => {})
+      if (spec.stdin !== undefined) child.stdin?.end(spec.stdin)
+      else child.stdin?.end()
+    }
+    if (spec.onEnd) this.#onEnd.set(id, spec.onEnd)
     this.#children.set(id, { child, exited })
     this.#store.append('run.started', { runId: id, kind: spec.kind, source: spec.source }, id)
     return this.get(id)!
@@ -175,6 +202,10 @@ export class RunManager {
       { runId: id, status, exitCode: info.exitCode ?? null, signal: info.signal ?? null, sideEffects: sideEffects.length },
       id,
     )
+    const done = this.#onEnd.get(id)
+    this.#onEnd.delete(id)
+    const rec = this.get(id)
+    if (done && rec) done(rec)
   }
 
   #recordSideEffects(id: string): SideEffect[] {
@@ -262,6 +293,9 @@ function toRecord(row: RunRow): RunRecord {
     id: row.id,
     kind: row.kind,
     source: row.source,
+    provider: row.provider ?? null,
+    model: row.model ?? null,
+    effort: row.effort ?? null,
     status: row.status,
     startedAt: row.started_at,
     finishedAt: row.finished_at,

@@ -141,6 +141,10 @@ export interface RunRecord {
   id: string
   kind: string
   source: string
+  /** What was asked of the provider, so a run record shows what was actually sent (spec 04). */
+  provider: string | null
+  model: string | null
+  effort: string | null
   status: RunStatus
   startedAt: string
   finishedAt: string | null
@@ -157,4 +161,86 @@ export interface RunsResponse {
   /** While true no new run may start and the gateway refuses everything but reads. */
   paused: boolean
   runs: RunRecord[]
+}
+
+// ---- Chat and provider adapters (spec 03, 04) ----
+
+/** One UI effort scale (spec 03). Each provider maps it to what exists. */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+export type Effort = (typeof EFFORTS)[number]
+
+export interface ModelInfo {
+  /** Value passed to the provider CLI (`--model`), or '' for the provider default. */
+  id: string
+  label: string
+  efforts: Effort[]
+}
+
+export interface ProviderModels {
+  provider: ProviderId
+  /** Where the list comes from, so the UI can say it honestly. */
+  source: 'static' | 'cli'
+  models: ModelInfo[]
+}
+
+/** Streamed output of one run, normalised across providers. */
+export type RunEvent =
+  | { type: 'token'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cachedTokens?: number }
+  | { type: 'rate_limit'; status: string; resetsAt?: string }
+  | { type: 'done'; text: string; stopReason?: string }
+  | { type: 'error'; message: string; kind: 'rate_limited' | 'needs_login' | 'failed' }
+
+export type ConversationKind = 'chat' | 'agent'
+
+export interface ConversationRecord {
+  id: string
+  title: string
+  kind: ConversationKind
+  provider: ProviderId
+  model: string
+  effort: Effort
+  /** Providers allowed to receive this conversation's context (spec 12). */
+  allowedProviders: ProviderId[]
+  createdAt: string
+  updatedAt: string
+}
+
+export type MessageStatus = 'complete' | 'streaming' | 'partial' | 'error'
+
+export interface MessageRecord {
+  id: string
+  conversationId: string
+  role: 'user' | 'assistant'
+  provider: ProviderId | null
+  model: string | null
+  effort: Effort | null
+  content: string
+  thinking: string
+  status: MessageStatus
+  error: string | null
+  runId: string | null
+  createdAt: string
+}
+
+export interface ConversationDetail {
+  conversation: ConversationRecord
+  messages: MessageRecord[]
+}
+
+export interface SendMessageRequest {
+  content: string
+  /** Optional per-message override; it also becomes the conversation's remembered choice. */
+  model?: string
+  effort?: Effort
+}
+
+export type SendMessageResponse =
+  | { status: 'started'; userMessage: MessageRecord; assistantMessage: MessageRecord; runId: string }
+  | { status: 'disclosure_required'; provider: ProviderId; text: string }
+
+/** One-line notice shown the first time context goes to a provider (spec 04 rev 2). */
+export const PROVIDER_DISCLOSURE: Record<string, string> = {
+  claude: 'This conversation is sent to Claude (Anthropic) through your Claude plan. Everything you type here, and earlier messages in this chat, go to that provider.',
 }

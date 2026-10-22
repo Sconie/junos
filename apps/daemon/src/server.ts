@@ -11,6 +11,7 @@ import {
   type ActionRequest,
   type ApprovalStatus,
   type ProviderProbe,
+  type SendMessageRequest,
   type RunsResponse,
   type ProvidersResponse,
   type SessionResponse,
@@ -25,6 +26,8 @@ import {
   sessionCookie,
   sessionFromRequest,
 } from './auth.ts'
+import { ClaudeAdapter } from './adapters/claude.ts'
+import { ChatError, ChatService } from './chat.ts'
 import { Gateway, testTools, type Autonomy } from './gateway.ts'
 import { acquireLock } from './lock.ts'
 import { FAKE_RUNS, PausedError, RunManager } from './runs.ts'
@@ -62,6 +65,9 @@ export interface Daemon {
   close(): Promise<void>
 }
 
+const CHAT_ACK_PATH = new RegExp('^/api/chat/disclosures/([a-z]+)/ack$')
+const CONVERSATION_PATH = new RegExp('^/api/conversations/([0-9a-f-]{36})(?:/(messages))?$')
+const RUN_STREAM_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stream$')
 const RUN_STOP_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stop$')
 const APPROVAL_PATH = new RegExp('^/api/approvals/([0-9a-f-]{36})(?:/(approve|deny))?$')
 
@@ -132,6 +138,14 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     })
     runs = new RunManager({ store: db, gateway, graceMs: options.stopGraceMs, confirmMs: options.stopConfirmMs, now: options.now })
     const runMgr = runs
+    const chatCwd = join(home, 'chat-cwd')
+    mkdirSync(chatCwd, { recursive: true })
+    const chat = new ChatService({ store: db, runs: runMgr, adapters: [new ClaudeAdapter(env)], cwd: chatCwd, now: options.now })
+    const chatFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof ChatError) return sendJson(res, err.status, { error: err.code, message: err.message })
+      if (err instanceof PausedError) return sendJson(res, 409, { error: 'paused', message: err.message })
+      sendJson(res, 500, { error: 'chat error' })
+    }
     const sweeper = setInterval(() => gateway.sweepExpired(), 30_000)
     sweeper.unref()
     const streamOwner = new WeakMap<ServerResponse, string>()
@@ -273,6 +287,73 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           () => sendJson(res, 200, { providers: probes } satisfies ProvidersResponse),
           () => sendJson(res, 500, { error: 'probe failed' }),
         )
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/api/chat/models') {
+        chat.providerStatus().then(
+          (status) => sendJson(res, 200, { providers: chat.providers(), acknowledged: chat.acknowledged(), status }),
+          (err) => chatFail(res, err),
+        )
+        return
+      }
+      const ack = CHAT_ACK_PATH.exec(url.pathname)
+      if (req.method === 'POST' && ack) {
+        try {
+          chat.acknowledge(ack[1]!)
+          return sendJson(res, 200, { acknowledged: chat.acknowledged() })
+        } catch (err) {
+          return chatFail(res, err)
+        }
+      }
+      if (req.method === 'GET' && url.pathname === '/api/conversations') return sendJson(res, 200, { conversations: chat.list() })
+      if (req.method === 'POST' && url.pathname === '/api/conversations') {
+        readJson(req).then(
+          (body) => {
+            try {
+              sendJson(res, 201, chat.createConversation((body ?? {}) as Record<string, never>))
+            } catch (err) {
+              chatFail(res, err)
+            }
+          },
+          () => sendJson(res, 400, { error: 'bad request' }),
+        )
+        return
+      }
+      const convPath = CONVERSATION_PATH.exec(url.pathname)
+      if (convPath) {
+        const [, convId, messages] = convPath as unknown as [string, string, string | undefined]
+        if (req.method === 'GET' && !messages) {
+          const found = chat.get(convId)
+          return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: 'not found' })
+        }
+        if (req.method === 'POST' && messages) {
+          readJson(req, 100_000).then(
+            (body) =>
+              chat.send(convId, (body ?? {}) as SendMessageRequest).then(
+                (out) => sendJson(res, out.status === 'started' ? 201 : 409, out),
+                (err) => chatFail(res, err),
+              ),
+            () => sendJson(res, 400, { error: 'bad request' }),
+          )
+          return
+        }
+      }
+      const runStream = RUN_STREAM_PATH.exec(url.pathname)
+      if (req.method === 'GET' && runStream) {
+        const live = chat.stream(runStream[1]!)
+        if (!live) return sendJson(res, 404, { error: 'no live stream for this run' })
+        res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive' })
+        const after = Number(req.headers['last-event-id'] ?? url.searchParams.get('lastEventId') ?? 0) || 0
+        const stop = live.subscribe(after, (entry) => {
+          if (res.writableEnded || res.destroyed) return
+          if (entry === null) {
+            res.write('event: end\ndata: {}\n\n')
+            res.end()
+          } else {
+            res.write(`id: ${entry.id}\ndata: ${JSON.stringify(entry.event)}\n\n`)
+          }
+        })
+        res.on('close', stop)
         return
       }
       if (req.method === 'GET' && url.pathname === '/api/runs') {

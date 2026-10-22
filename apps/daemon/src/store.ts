@@ -65,6 +65,41 @@ const MIGRATIONS = [
      stop_requested_at TEXT,
      side_effects_json TEXT NOT NULL DEFAULT '[]'
    )`,
+  // What a run asked of its provider (spec 04: visible in the run record).
+  `ALTER TABLE run ADD COLUMN provider TEXT;
+   ALTER TABLE run ADD COLUMN model TEXT;
+   ALTER TABLE run ADD COLUMN effort TEXT`,
+  // Chat (spec 02). The conversation remembers its model, effort and allowed providers.
+  `CREATE TABLE conversation (
+     id TEXT PRIMARY KEY,
+     title TEXT NOT NULL,
+     kind TEXT NOT NULL DEFAULT 'chat',
+     provider TEXT NOT NULL,
+     model TEXT NOT NULL DEFAULT '',
+     effort TEXT NOT NULL DEFAULT 'medium',
+     allowed_providers_json TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   );
+   CREATE TABLE message (
+     id TEXT PRIMARY KEY,
+     conversation_id TEXT NOT NULL REFERENCES conversation (id) ON DELETE CASCADE,
+     role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+     provider TEXT,
+     model TEXT,
+     effort TEXT,
+     content_md TEXT NOT NULL DEFAULT '',
+     thinking_md TEXT NOT NULL DEFAULT '',
+     status TEXT NOT NULL DEFAULT 'complete',
+     error TEXT,
+     run_id TEXT,
+     created_at TEXT NOT NULL
+   );
+   CREATE INDEX message_conversation ON message (conversation_id, created_at);
+   CREATE TABLE provider_disclosure (
+     provider TEXT PRIMARY KEY,
+     acknowledged_at TEXT NOT NULL
+   )`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */
