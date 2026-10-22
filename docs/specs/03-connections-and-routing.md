@@ -10,15 +10,15 @@ JunOS does not copy OAuth tokens out of other tools or reverse-engineer private 
 |---|---|---|---|
 | Claude | Claude Code CLI in print/streaming JSON mode, or the Claude Agent SDK pointed at the logged-in CLI | `claude login` | high |
 | Codex (ChatGPT) | Codex CLI non-interactive exec mode | `codex login` | high |
-| Cursor | Cursor's agent CLI in headless mode | Cursor sign-in | medium, verify |
+| Cursor | `cursor-agent -p` (headless), effort set in the model string | Cursor sign-in | medium, flags verified |
 | Grok (X) | no supported route known. **Browser-session scraping is out of scope** (fragile, likely against terms). Card stays "not available" until an official client or API route exists | X login | **not available** |
-| Nous Portal | the Portal's official sign-in if it offers a supported client flow; otherwise Hermes models run locally. **No API-key storage in JunOS** (it would contradict the goal) | Portal login | low-medium, verify |
+| Nous Portal | the Portal's official sign-in if it offers a supported client flow; otherwise Hermes models run locally. **No API-key storage in JunOS** (it would contradict the goal) | Portal login | low-medium; official route is Hermes's own sign-in, so shown as "via Hermes" |
 
 Each adapter is a "capability probe + runner": `which <cli>`, `status` command, version check, then streaming run.
 
 **Scope of the promise**: JunOS gives access to models exposed by *verified, supported adapters*. Claude and Codex are the initial validation targets; Cursor and Nous are research candidates; Grok/X is not available. "No API keys" is a release gate for each adapter, not a claim that every listed provider qualifies.
 
-Verify each row against current vendor docs in the Phase 1 spike before building (CLIs change flags often).
+Spike results (2026-10-22) are in [16-adapter-spikes.md](16-adapter-spikes.md): Claude, Codex and Cursor routes are confirmed from `--help` and vendor docs (live output shapes still to capture); Nous Portal is reached through Hermes, not a JunOS adapter. CLIs change flags often, so keep the version probe and contract tests.
 
 ## Connection states (single enum used everywhere: UI, Home, router, Hermes pill)
 `connected` · `needs_login` (show Reconnect with the exact CLI command) · `rate_limited` (with reset time if known) · `unavailable` (CLI missing or provider unverified) · `degraded` · `unknown` (not yet probed). Hermes's own states (online/idle/working/paused/error/unreachable) are agent states, a separate enum.
