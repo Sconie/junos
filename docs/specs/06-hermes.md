@@ -23,7 +23,13 @@ POST /hermes/approvals/:id {decision}
 - Hermes works on the VPS filesystem, not Jonas's local files. Projects handed over are synced by git (push branch, Hermes clones) or an explicit upload; "Give to Hermes" on a local file uploads a copy and says so.
 - Status adds `unreachable` (VPS or tunnel down) distinct from `error`.
 
-Defining the wire format first (and mocking it) lets the UI be built before Hermes is connected. **Still needed from Jonas:** how Hermes runs on the VPS (CLI, gateway, Docker?), where its memory lives, and whether Tailscale is available.
+Defining the wire format first (and mocking it) lets the UI be built before Hermes is connected. **Container (confirmed by Jonas, 2026-10-22): Hermes runs in a Docker container on the VPS.** Consequences:
+- The shim runs as a sidecar container (or on the host) on a private Docker network; only the shim publishes a port, bound to the Tailscale/private interface. Hermes itself publishes nothing.
+- Memory, skills and logs live in named volumes (or bind mounts) so they survive redeploys; the shim mounts them read-only for the Memory/Skills/Logs tabs, and writes memory only through Hermes's own interface.
+- Hermes's workspace is a dedicated volume. Project handoff = git clone into it, or an upload into it; nothing else on the host is mounted.
+- Lifecycle controls (Restart, Update image) go through the shim calling the Docker API with a restricted socket proxy; never mount `/var/run/docker.sock` into Hermes.
+- Run with a non-root user, dropped capabilities, resource limits, and a restart policy; health check feeds the status pill.
+**Still needed from Jonas:** how Hermes inside the container is driven (CLI, gateway/HTTP, or messaging platform), where its memory lives in the volume, and whether Tailscale is available.
 
 ## Screen (matches mockup)
 Header: name, status pill (pulsing when working), model, uptime, Pause/Stop/Settings.
