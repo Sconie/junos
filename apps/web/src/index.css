@@ -174,7 +174,7 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 @media (max-width: 720px) { .approvals-layout { grid-template-columns: 1fr; } }
 
 /* top bar and Stop */
-.topbar { display: flex; justify-content: flex-end; min-height: 40px; margin: -8px 0 8px; }
+.topbar { display: flex; justify-content: flex-end; align-items: flex-start; flex-wrap: wrap; gap: 10px; min-height: 40px; margin: -8px 0 8px; }
 .stop { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
 .stop-btn { background: var(--bad); border-color: var(--bad); color: #1a0b0b; font-weight: 700; }
 .stop-btn:disabled { opacity: 0.7; }

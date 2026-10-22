@@ -192,6 +192,22 @@ describe('approvals gate execution', () => {
     assert.equal((await approvals('pending')).length, 1)
   })
 
+  it('always lists every pending approval, however many newer resolved ones there are', async () => {
+    let now = Date.parse('2026-10-22T10:00:00Z')
+    const { ask, decide, approvals, b } = await setup({ now: () => now })
+    const oldPending = await ask(send({ args: { to: 'old@example.com' } }))
+    for (let i = 0; i < 130; i++) {
+      now += 1000
+      const id = await ask(send({ args: { to: `n${i}@example.com` } }))
+      await decide(id, 'deny')
+    }
+    const all = (await b.json<{ approvals: ApprovalRecord[] }>('/api/approvals')).approvals
+    assert.ok(all.some((a) => a.id === oldPending && a.status === 'pending'), 'the oldest still-valid pending request is in the unfiltered list')
+    assert.equal(all.filter((a) => a.status === 'pending').length, 1)
+    assert.ok(all.length <= 101, 'resolved history is capped')
+    assert.equal((await approvals('pending')).length, 1)
+  })
+
   it('keeps an approval across a daemon restart', async () => {
     const { home, cleanup } = tempHome()
     cleanups.push(cleanup)

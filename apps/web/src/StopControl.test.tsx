@@ -31,9 +31,9 @@ function mockDaemon(initial: RunsResponse) {
       const method = init.method ?? 'GET'
       calls.push(`${method} ${String(input)}`)
       if (String(input) === '/api/stop' && method === 'POST') {
-        state = { paused: true, runs: state.runs.map((r) => (r.status === 'running' ? { ...r, status: 'stopped', finishedAt: new Date().toISOString() } : r)) }
+        state = { paused: true, pausedAt: new Date().toISOString(), runs: state.runs.map((r) => (r.status === 'running' ? { ...r, status: 'stopped', finishedAt: new Date().toISOString() } : r)) }
       }
-      if (String(input) === '/api/resume' && method === 'POST') state = { ...state, paused: false }
+      if (String(input) === '/api/resume' && method === 'POST') state = { ...state, paused: false, pausedAt: null }
       return new Response(JSON.stringify(state), { status: 200 })
     }),
   )
@@ -47,20 +47,20 @@ afterEach(() => {
 
 describe('StopControl', () => {
   it('is hidden when nothing runs and nothing is stopped', async () => {
-    const d = mockDaemon({ paused: false, runs: [] })
+    const d = mockDaemon({ paused: false, pausedAt: null, runs: [] })
     const { container } = render(<StopControl />)
     await waitFor(() => expect(d.calls).toContain('GET /api/runs'))
     expect(container.querySelector('.stop')).toBeNull()
   })
 
   it('shows a Stop button with the number of running runs', async () => {
-    mockDaemon({ paused: false, runs: [run(), run({ id: '22222222-2222-4222-8222-222222222222' })] })
+    mockDaemon({ paused: false, pausedAt: null, runs: [run(), run({ id: '22222222-2222-4222-8222-222222222222' })] })
     render(<StopControl />)
     expect((await screen.findByRole('button', { name: 'Stop · 2 running' })).tagName).toBe('BUTTON')
   })
 
   it('stops everything with one click and then shows the stopped state with Resume', async () => {
-    const d = mockDaemon({ paused: false, runs: [run()] })
+    const d = mockDaemon({ paused: false, pausedAt: null, runs: [run()] })
     render(<StopControl />)
     fireEvent.click(await screen.findByRole('button', { name: /Stop · 1 running/ }))
     expect(await screen.findByText('Stopped')).toBeTruthy()
@@ -70,7 +70,7 @@ describe('StopControl', () => {
   })
 
   it('resumes from the stopped state', async () => {
-    const d = mockDaemon({ paused: true, runs: [] })
+    const d = mockDaemon({ paused: true, pausedAt: new Date().toISOString(), runs: [] })
     render(<StopControl />)
     fireEvent.click(await screen.findByRole('button', { name: 'Resume' }))
     await waitFor(() => expect(d.calls).toContain('POST /api/resume'))
@@ -78,27 +78,30 @@ describe('StopControl', () => {
   })
 
   it('shows a disabled "Stopping…" while a run is cancelling', async () => {
-    mockDaemon({ paused: true, runs: [run({ status: 'cancelling' })] })
+    mockDaemon({ paused: true, pausedAt: new Date().toISOString(), runs: [run({ status: 'cancelling' })] })
     render(<StopControl />)
     const button = (await screen.findByRole('button', { name: 'Stopping…' })) as HTMLButtonElement
     expect(button.disabled).toBe(true)
   })
 
   it('says "Stop not confirmed" when a process would not die, instead of claiming success', async () => {
-    mockDaemon({ paused: true, runs: [run({ status: 'stop_unconfirmed', finishedAt: new Date().toISOString() })] })
+    mockDaemon({ paused: true, pausedAt: new Date().toISOString(), runs: [run({ status: 'stop_unconfirmed', finishedAt: new Date().toISOString() })] })
     render(<StopControl />)
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('Stop not confirmed')
     expect(alert.textContent).toContain('may still be running')
-    expect(screen.queryByText('Stopped')).toBeNull()
+    // New runs are still paused, so Resume is offered next to the alarm.
+    expect(screen.getByRole('button', { name: 'Resume' })).toBeTruthy()
   })
 
   it('lists actions that had already run, because they cannot be undone', async () => {
     mockDaemon({
       paused: true,
+      pausedAt: new Date(Date.now() - 1000).toISOString(),
       runs: [
         run({
           status: 'stopped',
+          stopRequestedAt: new Date().toISOString(),
           finishedAt: new Date().toISOString(),
           sideEffects: [{ digest: 'a'.repeat(64), tool: 'mail.send', class: 'external-send', target: 'alice@example.com' }],
         }),
@@ -108,5 +111,51 @@ describe('StopControl', () => {
     expect(await screen.findByText('1 action had already run')).toBeTruthy()
     expect(screen.getByText('mail.send')).toBeTruthy()
     expect(screen.getByText(/alice@example.com/)).toBeTruthy()
+  })
+
+  it('keeps the Stop button when a survivor is flagged and other runs are still going', async () => {
+    mockDaemon({
+      paused: false,
+      pausedAt: null,
+      runs: [run({ id: '99999999-9999-4999-8999-999999999999', status: 'stop_unconfirmed', finishedAt: new Date().toISOString() }), run()],
+    })
+    render(<StopControl />)
+    expect((await screen.findByRole('alert')).textContent).toContain('Stop not confirmed')
+    expect(screen.getByRole('button', { name: 'Stop · 1 running' })).toBeTruthy()
+  })
+
+  it('lists completed actions for an unconfirmed run too', async () => {
+    mockDaemon({
+      paused: true,
+      pausedAt: new Date(Date.now() - 1000).toISOString(),
+      runs: [
+        run({
+          status: 'stop_unconfirmed',
+          finishedAt: new Date().toISOString(),
+          sideEffects: [{ digest: 'b'.repeat(64), tool: 'files.delete', class: 'destructive', target: '/work/old' }],
+        }),
+      ],
+    })
+    render(<StopControl />)
+    expect(await screen.findByText('1 action had already run')).toBeTruthy()
+    expect(screen.getByText('files.delete')).toBeTruthy()
+  })
+
+  it('does not list actions from an earlier stop after a Resume and a new Stop', async () => {
+    mockDaemon({
+      paused: true,
+      pausedAt: new Date().toISOString(),
+      runs: [
+        run({
+          status: 'stopped',
+          stopRequestedAt: new Date(Date.now() - 3600_000).toISOString(),
+          finishedAt: new Date(Date.now() - 3590_000).toISOString(),
+          sideEffects: [{ digest: 'c'.repeat(64), tool: 'mail.send', class: 'external-send', target: 'old@example.com' }],
+        }),
+      ],
+    })
+    render(<StopControl />)
+    expect(await screen.findByText('Stopped')).toBeTruthy()
+    expect(screen.queryByText('1 action had already run')).toBeNull()
   })
 })

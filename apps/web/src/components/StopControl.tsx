@@ -13,7 +13,7 @@ export default function StopControl() {
   const { api } = useAuth()
   const { lastSeq } = useDaemon()
   // `at` is when the snapshot was taken, so "within the last hour" needs no clock read during render.
-  const [snap, setSnap] = useState<{ data: RunsResponse; at: number }>({ data: { paused: false, runs: [] }, at: 0 })
+  const [snap, setSnap] = useState<{ data: RunsResponse; at: number }>({ data: { paused: false, pausedAt: null, runs: [] }, at: 0 })
   const state = snap.data
   const [busy, setBusy] = useState(false)
   const [reload, setReload] = useState(0)
@@ -55,26 +55,26 @@ export default function StopControl() {
   const unconfirmed = state.runs.filter(
     (r) => r.status === 'stop_unconfirmed' && r.finishedAt && snap.at - Date.parse(r.finishedAt) < HOUR_MS,
   )
-  const lastStopped = state.runs.filter((r) => r.status === 'stopped' && r.sideEffects.length > 0)
+  // Only the stop in progress: effects from an earlier stop, before a Resume, are not news.
+  const lastStopped = state.runs.filter(
+    (r) => r.status === 'stopped' && r.sideEffects.length > 0 && state.pausedAt !== null && (r.stopRequestedAt ?? '') >= state.pausedAt,
+  )
 
-  if (unconfirmed.length > 0) {
-    return (
+  // A survivor is an alarm, not a replacement for the Stop button: both can show at once.
+  const warning =
+    unconfirmed.length > 0 ? (
       <div className="stop stop-warn" role="alert" data-state="unconfirmed">
         <b>Stop not confirmed</b>
         <span>
           {unconfirmed.length} {unconfirmed.length === 1 ? 'process' : 'processes'} may still be running. Check the machine.
         </span>
-        {state.paused && (
-          <button type="button" disabled={busy} onClick={() => void call('/resume')}>
-            Resume
-          </button>
-        )}
+        <SideEffects runs={unconfirmed} />
       </div>
-    )
-  }
+    ) : null
 
+  let control = null
   if (cancelling.length > 0) {
-    return (
+    control = (
       <div className="stop" role="status" data-state="cancelling">
         <button type="button" className="stop-btn" disabled>
           Stopping…
@@ -82,20 +82,16 @@ export default function StopControl() {
         <span className="muted">{cancelling.length} cancelling</span>
       </div>
     )
-  }
-
-  if (running.length > 0) {
-    return (
+  } else if (running.length > 0) {
+    control = (
       <div className="stop" data-state="running">
         <button type="button" className="stop-btn" disabled={busy} onClick={() => void call('/stop')}>
           Stop · {running.length} running
         </button>
       </div>
     )
-  }
-
-  if (state.paused) {
-    return (
+  } else if (state.paused) {
+    control = (
       <div className="stop stop-stopped" role="status" data-state="stopped">
         <b>Stopped</b>
         <span className="muted">Nothing new will start until you resume.</span>
@@ -107,7 +103,13 @@ export default function StopControl() {
     )
   }
 
-  return null
+  if (!warning && !control) return null
+  return (
+    <>
+      {warning}
+      {control}
+    </>
+  )
 }
 
 /** Work that had already completed when a run was stopped: it cannot be undone, so it is listed. */

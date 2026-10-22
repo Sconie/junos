@@ -160,6 +160,8 @@ export interface RunRecord {
 export interface RunsResponse {
   /** While true no new run may start and the gateway refuses everything but reads. */
   paused: boolean
+  /** When the current Stop began (null when not stopped), so only that stop's side effects are shown. */
+  pausedAt: string | null
   runs: RunRecord[]
 }
 
