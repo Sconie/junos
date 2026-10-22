@@ -83,9 +83,15 @@ function mockDaemon(opts: Daemon = {}) {
       calls.push({ path, method, body })
       if (path === '/chat/models') {
         return json({
-          providers: [{ provider: 'claude', source: 'static', models: ['', 'opus', 'sonnet'].map((id) => ({ id, label: id || 'Default', efforts: EFFORTS })) }],
+          providers: [
+            { provider: 'claude', source: 'static', models: ['', 'opus', 'sonnet'].map((id) => ({ id, label: id || 'Default', efforts: EFFORTS })) },
+            { provider: 'codex', source: 'static', models: [{ id: '', label: 'Default', efforts: ['low', 'medium', 'high', 'xhigh'] }] },
+          ],
           acknowledged: acknowledged ? ['claude'] : [],
-          status: [{ provider: 'claude', available: opts.available ?? true, reason: 'The Claude CLI was not found. Install Claude Code and run `claude login`.' }],
+          status: [
+            { provider: 'codex', available: true },
+            { provider: 'claude', available: opts.available ?? true, reason: 'The Claude CLI was not found. Install Claude Code and run `claude login`.' },
+          ],
         })
       }
       if (path === '/conversations' && method === 'GET') return json({ conversations: opts.conversations ?? [] })
@@ -259,5 +265,50 @@ describe('Chat', () => {
     await screen.findByText(/<img src=x/)
     expect(container.querySelector('img')).toBeNull()
     expect(container.querySelector('.bubble-text b')).toBeNull()
+  })
+})
+
+describe('Chat provider picker', () => {
+  it('offers Claude and Codex and creates the conversation for the chosen provider', async () => {
+    const calls = mockDaemon()
+    render(<Chat />)
+    const provider = (await screen.findByLabelText('Provider')) as HTMLSelectElement
+    expect(within(provider).getAllByRole('option').map((o) => o.textContent)).toEqual(['Claude', 'Codex (ChatGPT)'])
+    fireEvent.change(provider, { target: { value: 'codex' } })
+    expect(screen.getByText(/via your ChatGPT plan · may send to: Codex \(ChatGPT\) only/)).toBeTruthy()
+    type('hello codex')
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(1))
+    const created = calls.find((c) => c.path === '/conversations' && c.method === 'POST')!
+    expect((created.body as { provider: string }).provider).toBe('codex')
+  })
+
+  it('greys out the efforts Codex does not have', async () => {
+    mockDaemon()
+    render(<Chat />)
+    fireEvent.change(await screen.findByLabelText('Provider'), { target: { value: 'codex' } })
+    const effort = screen.getByRole('group', { name: 'Effort' })
+    await waitFor(() => expect((within(effort).getByRole('button', { name: 'Max' }) as HTMLButtonElement).disabled).toBe(true))
+    expect((within(effort).getByRole('button', { name: 'XHigh' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('resets an effort Codex lacks when switching to it', async () => {
+    mockDaemon()
+    render(<Chat />)
+    const effort = await screen.findByRole('group', { name: 'Effort' })
+    fireEvent.click(within(effort).getByRole('button', { name: 'Max' }))
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'codex' } })
+    await waitFor(() => expect(within(effort).getByRole('button', { name: 'Medium' }).getAttribute('aria-pressed')).toBe('true'))
+  })
+
+  it('locks the provider once a conversation has messages', async () => {
+    const c = conv({ provider: 'codex' })
+    mockDaemon({ conversations: [c], details: { [c.id]: [msg({ id: 'u1', content: 'earlier' })] } })
+    render(<Chat />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Earlier chat' }))
+    await screen.findByText('earlier')
+    const provider = screen.getByLabelText('Provider') as HTMLSelectElement
+    await waitFor(() => expect(provider.value).toBe('codex'))
+    expect(provider.disabled).toBe(true)
   })
 })

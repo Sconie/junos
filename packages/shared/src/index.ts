@@ -245,4 +245,37 @@ export type SendMessageResponse =
 /** One-line notice shown the first time context goes to a provider (spec 04 rev 2). */
 export const PROVIDER_DISCLOSURE: Record<string, string> = {
   claude: 'This conversation is sent to Claude (Anthropic) through your Claude plan. Everything you type here, and earlier messages in this chat, go to that provider.',
+  codex: 'This conversation is sent to Codex (OpenAI) through your ChatGPT plan. Everything you type here, and earlier messages in this chat, go to that provider.',
+}
+
+// ---- Connections (spec 03) ----
+
+/** One enum for connection state, used by the UI, Home, the router and the Hermes pill (spec 03). */
+export const CONNECTION_STATES = ['connected', 'needs_login', 'rate_limited', 'unavailable', 'degraded', 'unknown'] as const
+export type ConnectionState = (typeof CONNECTION_STATES)[number]
+
+export interface ConnectionRecord {
+  provider: ProviderId
+  label: string
+  state: ConnectionState
+  /** Short human reason for the state, in the person's terms. */
+  detail: string
+  /** How it is signed in, e.g. "Signed in via CLI". Never a token, never an email. */
+  method: string | null
+  /** The plan, only where the CLI reports it offline (e.g. "pro"). */
+  plan: string | null
+  version: string | null
+  /** True when chat works through JunOS with this provider today. */
+  chat: boolean
+  /** Shown instead of a state for providers that are planned or reached another way. */
+  note: 'coming' | 'via_hermes' | 'chat_later' | null
+  /** The exact command to run to sign in again. */
+  reconnect: string | null
+  /** ISO time a rate limit is expected to lift, when known. */
+  resetsAt: string | null
+  checkedAt: string
+}
+
+export interface ConnectionsResponse {
+  connections: ConnectionRecord[]
 }

@@ -251,6 +251,7 @@ export class ChatService {
     let text = ''
     let thinking = ''
     let failure: { message: string; kind: string } | undefined
+    let limitResetsAt: string | null = null
 
     let run
     try {
@@ -262,7 +263,12 @@ export class ChatService {
         onEvent: (event) => {
           if (event.type === 'token') text += event.text
           else if (event.type === 'thinking') thinking += event.text
-          else if (event.type === 'error') failure = { message: event.message, kind: event.kind }
+          else if (event.type === 'rate_limit' && event.status !== 'allowed') limitResetsAt = event.resetsAt ?? null
+          else if (event.type === 'error') {
+            failure = { message: event.message, kind: event.kind }
+            // Remembered so the Connections screen can say the plan is limited, and until when.
+            if (event.kind === 'rate_limited') this.#store.append('provider.rate_limited', { provider: conv.provider, resetsAt: limitResetsAt, at: this.#iso() }, conv.provider)
+          }
           else if (event.type === 'usage' && event.inputTokens > HEAVY_CONTEXT_TOKENS) {
             this.#store.append('provider.heavy_context', { provider: conv.provider, inputTokens: event.inputTokens, messageId: assistantId })
           }
