@@ -19,7 +19,7 @@ A personal AI command center for one user (Jonas). One place to chat with any mo
 Each screen below lists its phase in 13-roadmap.
 
 ## Design status
-Translucent Glass is the settled direction (frosted panels, atmospheric dark background). The accent palette is open: see 14. `14-ui-system.md` is the implementation authority; the Stitch exports in /design are reference images, and `design/stitch-prompts.md` is historical input.
+Translucent Glass is the settled direction (frosted panels, atmospheric dark background). The accent is soft green (decided 2026-10-22): see 14. `14-ui-system.md` is the implementation authority; the Stitch exports in /design are reference images, and `design/stitch-prompts.md` is historical input.
 
 ## Navigation model
 Primary: Home, Chat, Inbox, Tasks, Kanban, Hermes. Secondary: Workflows, Scout, Files and projects, Connections, Settings. Agent chats are a filter of Chat, not a separate destination, until there is more than one agent. Home is a summary, Inbox the decision queue, Hermes the supervision surface.
@@ -37,6 +37,7 @@ Primary: Home, Chat, Inbox, Tasks, Kanban, Hermes. Secondary: Workflows, Scout, 
 | Scout | [08-scout](08-scout.md) |
 | Kanban | [09-kanban](09-kanban.md) |
 | Files and projects | [11-files-and-projects](11-files-and-projects.md) |
+| Terminal | [15-terminal](15-terminal.md) |
 | Connections | [03-connections-and-routing](03-connections-and-routing.md) |
 
 ## Cross-cutting docs

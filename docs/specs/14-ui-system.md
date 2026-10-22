@@ -3,7 +3,7 @@
 Direction (chosen by Jonas): **Translucent Glass** from the Stitch project "JunOS Soft Dark": atmospheric dark background, frosted panels. Reference images: `/design/stitch-glass/` and `/design/stitch-softdark/`.
 
 ## Tokens (rev 2: colour kept out of the background)
-The glass look stays: frosted panels over an atmospheric dark background. The background is **neutral** (deep blue-grey/graphite gradient, subtle noise or light bloom, no violet or teal tint). Colour is reserved for meaning: accent only for selection, focus and primary actions; teal/amber/red only for status. Violet is no longer a decorative or ambient colour; the accent hue itself is still open (violet remains a candidate, test blue/teal too).
+The glass look stays: frosted panels over an atmospheric dark background. The background is **neutral** (deep blue-grey/graphite gradient, subtle noise or light bloom, no violet or teal tint). Colour is reserved for meaning: accent only for selection, focus and primary actions; teal/amber/red only for status. Violet is no longer a decorative or ambient colour; the accent hue is **soft green** (decided by Jonas, 2026-10-22; violet is dropped). Because `--ok` is teal, status and accent must not be confused: keep `--ok` visibly teal-leaning and never use the accent alone to signal success; status dots also carry an icon or text.
 ```css
 :root {
   --bg: #0A0B0E;
@@ -13,7 +13,7 @@ The glass look stays: frosted panels over an atmospheric dark background. The ba
   --panel-strong: rgba(255,255,255,0.08);
   --border: rgba(255,255,255,0.10);
   --blur: 18px;
-  --accent: #8B5CF6;            /* selection, focus ring, primary buttons only; hue open */
+  --accent: #7FD6A4;            /* soft green (Jonas, 2026-10-22): selection, focus ring, primary buttons only */
   --accent-fg: #0B0C0F;         /* text on accent fills; verified >= 4.5:1 */
   --ok: #2DD4BF;  --warn: #F5B544;  --bad: #F87171;   /* status only */
   --text: #E7E8EC;  --text-dim: #A3A9B5;               /* dim text verified >= 4.5:1 on panel */

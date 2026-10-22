@@ -42,5 +42,5 @@ The model list from `models()` declares which efforts each model supports, so th
 Because limits are shared with Jonas's own manual use of those tools, the scheduler must treat subscription capacity as a budget: background jobs yield when the weekly meter is above a configurable threshold (default 80%), and the Inbox gets a notice instead of silently burning the cap. When a provider exposes no meter, use local counters (runs per day/week) with user-set caps, and treat the last rate-limit response as authoritative until its reset time.
 
 ## Open questions
-- Grok/X path (see spike). If none is legitimate, ship without it and keep the card as "coming".
+- Decided (Jonas, 2026-10-22): v1 ships without Grok/X; its card stays as "coming" while the spike continues.
 - Concurrency limits per provider (probably 1-2 parallel runs).

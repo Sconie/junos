@@ -35,8 +35,8 @@ Defining the wire format first (and mocking it) lets the UI be built before Herm
 - Approvals can be answered from either place: the Inbox item and a Telegram prompt (inline buttons) resolve the same approval; first answer wins and the other is marked resolved. Approval decisions still pass the junosd-side check from 12.
 - The Telegram bot token stays on the VPS, in the container's secrets. JunOS never stores it. The bot should only answer Jonas's numeric Telegram user ID (allowlist); confirm this is set.
 - Phone fallback: if JunOS is unreachable, Telegram still works, and mirrored history catches up when the shim reconnects.
-- Notifications: urgent Inbox items could be pushed via the same Telegram bot (decision for Jonas, see open questions), which removes the need for a separate push service.
-**Still needed from Jonas:** how the Hermes gateway inside the container can be reached by the shim (CLI, local HTTP/API server, or only via the Telegram gateway), where its memory lives in the volume, and whether Tailscale is available.
+- Notifications: decided (Jonas, 2026-10-22): urgent Inbox items go through a **separate JunOS Telegram bot** (not the Hermes bot), with inline Approve/Deny buttons that resolve the same digest-bound gateway approval. See 07.
+**Still needed from Jonas:** how the Hermes gateway inside the container can be reached by the shim (CLI, local HTTP/API server, or only via the Telegram gateway), where its memory lives in the volume, and ~~whether Tailscale is available~~ (decided: Tailscale + shim, Jonas 2026-10-22). The first two are still unanswered: until Jonas confirms, plan for the Telegram-only case and build the shim as the adapter.
 
 ## Screen (matches mockup)
 Header: name, status pill (pulsing when working), model, uptime, Pause/Stop/Settings.
@@ -59,5 +59,6 @@ Bottom tabs: **Memory** (editable chips with pin), **Skills/Tools** (toggles), *
 - Stop halts within a few seconds and is logged.
 
 ## Open questions
-- Resolved: Hermes runs on a VPS (see Deployment). Open: file sync strategy for projects (git vs upload).
-- One Hermes or several named agents? Data model already allows many (`agent` table).
+- Resolved: Hermes runs on a VPS (see Deployment). Project files reach Hermes through **git** (Hermes clones the repo; changes come back as branches or PRs). Decided by Jonas, 2026-10-22.
+- One Hermes for now (assumed, 2026-10-22); the data model already allows many (`agent` table).
+- Open: what the Hermes container exposes besides Telegram (CLI, local HTTP API) and where its memory lives in the volume.

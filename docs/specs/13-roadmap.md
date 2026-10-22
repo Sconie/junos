@@ -27,7 +27,8 @@ Current scaffold: Vite + React shell with mock pages, no daemon, nothing wired. 
 
 ## Phase 3: Agents and board
 - Hermes bridge: mock first, then the real shim on the VPS; the mock must be validated against a recorded real Hermes session before this phase is called done.
-- Console, approvals from Inbox and Telegram through the same gateway, agent chats.
+- Console, approvals from Inbox and Telegram (separate JunOS bot) through the same gateway, agent chats.
+- Terminal (15): local PC shell and VPS shell tabs; agent-run commands gated.
 - Kanban with atomic Hermes pickup (09); Repo health and Weekly review workflows.
 - Cursor and Nous adapters if their spikes found supported routes.
 **Done when**: Jonas hands Hermes a Ready card and gets a Review result with a summary; Stop works on the real VPS Hermes or says honestly that it cannot confirm.
@@ -37,7 +38,7 @@ Current scaffold: Vite + React shell with mock pages, no daemon, nothing wired. 
 **Done when**: Scout runs a week with under 30% of findings dismissed as noise.
 
 ## Phase 5: Polish
-Packaging (Tauri or service install), backups UI, notifications, light theme, phone access.
+Packaging (Tauri wrapper after the browser-first build, or service install), backups UI, notifications, light theme, phone access.
 
 ## Risks
 | Risk | Mitigation |

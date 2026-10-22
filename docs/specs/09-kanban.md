@@ -46,4 +46,4 @@ Every change emits `kanban.card.*` events (used by triggers in 05).
 
 ## Open questions
 - Sync with GitHub Issues / Linear later? Start local-only.
-- Multiple boards per project, or one board with a project filter? Proposed: one board, project field.
+- Decided (Jonas, 2026-10-22): one board with a project field and filter; local-only to start.

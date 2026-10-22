@@ -48,8 +48,8 @@ A named preset: system prompt, default model/effort, tool allowlist, memory scop
 - Agent chat with Hermes shows directives and run cards in one thread.
 
 ## Open questions
-- Notifications: desktop only, or also push/email for urgent items? Option: send urgent items through the existing Hermes Telegram bot (or a second JunOS bot), with Approve/Deny inline buttons.
-- Mail/calendar as inbox sources (Gmail, Google Calendar): v2, read-only first.
+- Decided (Jonas, 2026-10-22): urgent items are also pushed through a separate JunOS Telegram bot with Approve/Deny inline buttons. The bot token lives in the junosd keychain and the bot answers only Jonas's numeric user ID; button presses are checked by the gateway like any approval.
+- Mail/calendar as inbox sources (Gmail, Google Calendar): decided v2, read-only first (Jonas, 2026-10-22).
 
 ## Rev 2 additions
 - Approval items use the shared ApprovalCard (14) and show actor, exact action/diff, target, expiry and irreversibility. Approve/deny shortcuts only work in the focused detail view, not on list rows, and the list does not re-sort while a detail is open.

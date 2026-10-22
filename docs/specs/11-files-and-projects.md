@@ -31,7 +31,7 @@ Content is only sent to a model when Jonas attaches it or a workflow he enabled 
 - Excluded paths never appear in the index.
 
 ## Open questions
-- Read-only first? Proposed: yes; edits only through Hermes or a CLI model under the approval policy.
+- Read-only first: yes; edits only through Hermes or a CLI model under the approval policy. Project files reach Hermes through git (see 06).
 
 ## Rev 2 additions
 - **Revocation**: removing a folder deletes its index rows, FTS entries, summaries, embeddings and caches, and cancels queued jobs; the UI confirms what was removed.

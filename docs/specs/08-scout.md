@@ -39,7 +39,7 @@ Dismiss reasons (`not relevant`, `already know`, `too risky`, `later`) are store
 - A dismissed item of the same title does not return.
 
 ## Open questions
-- Cadence: daily for releases, weekly for ideas?
+- Decided (Jonas, 2026-10-22): daily for releases, weekly for ideas, digest to the Inbox. Manual run button always available.
 - Should Scout be allowed to propose a draft PR in a branch? Defer until trust is built.
 
 ## Rev 2 additions

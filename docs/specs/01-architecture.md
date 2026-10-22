@@ -76,5 +76,5 @@ Migrate by moving `src/` into `apps/web` once the daemon exists (Phase 1).
 - Output of runs is stored (truncated at a configurable size) for audit.
 
 ## Open questions
-- Electron/Tauri wrapper vs plain localhost tab? (Tauri gives a tray icon and auto-start.)
+- Decided (Jonas, 2026-10-22): browser tab on localhost first; a Tauri wrapper (tray, auto-start) later in Phase 5. The daemon runs as a user-level auto-start service (Windows) from day one.
 - Run the daemon as a launchd/systemd user service from day one?

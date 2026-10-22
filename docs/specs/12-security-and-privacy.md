@@ -75,4 +75,4 @@ Shim bound to the private interface only, firewall denies everything else, key-o
 ## Open questions
 - Keychain access from Node: which library or OS CLI wrapper?
 - Sandbox technology for CLI-backed agents on Jonas's machine: separate OS user, container, or worktree plus deny flags only? Decide in the Phase 0 spike.
-- Telegram alerts and Tailscale availability: waiting on Jonas.
+- Decided (Jonas, 2026-10-22): Tailscale + shim for the VPS; separate JunOS Telegram bot for alerts. See also 15 for terminal rules.
