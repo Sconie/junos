@@ -38,6 +38,7 @@ Primary: Home, Chat, Inbox, Tasks, Kanban, Hermes. Secondary: Workflows, Scout, 
 | Kanban | [09-kanban](09-kanban.md) |
 | Files and projects | [11-files-and-projects](11-files-and-projects.md) |
 | Terminal | [15-terminal](15-terminal.md) |
+| Decisions, round 2 | [17-decisions-round-2](17-decisions-round-2.md) |
 | Connections | [03-connections-and-routing](03-connections-and-routing.md) |
 
 ## Cross-cutting docs
