@@ -63,3 +63,11 @@ describe('design tokens', () => {
     expect(hex('accent')).not.toEqual(hex('ok'))
   })
 })
+
+describe('background', () => {
+  it('paints the atmosphere with longhands (a colour layer cannot precede the gradients in the shorthand)', () => {
+    expect(css).toMatch(/background-color:\s*var\(--bg\)/)
+    expect(css).toMatch(/background-image:\s*var\(--bg-atmos\)/)
+    expect(css).not.toMatch(/background:\s*var\(--bg\)\s+var\(--bg-atmos\)/)
+  })
+})
