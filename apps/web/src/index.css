@@ -5,6 +5,13 @@
   --text: #e6e8ee;
   --muted: #8a90a2;
   --accent: #7c9cff;
+  --accent-fg: #0b0c0f;
+  --text-dim: #a3a9b5;
+  --ok: #2dd4bf;
+  --warn: #f5b544;
+  --bad: #f87171;
+  --radius: 12px;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
   font-family: Inter, system-ui, sans-serif;
   color: var(--text);
   background: var(--bg);
