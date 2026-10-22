@@ -362,6 +362,18 @@ describe('stop edge cases found in review', () => {
     assert.ok(store.since(0).some((e) => e.type === 'run.stopped' && e.payload.late === true))
   })
 
+  it('records a killed run as stopped when the daemon shuts down', async () => {
+    const { runs, spawnOne, store } = await manager()
+    const { run, pid } = spawnOne()
+    await runs.closeAll()
+    assert.equal(await waitDead(pid), true)
+    const rec = runs.get(run.id)!
+    assert.equal(rec.status, 'stopped')
+    assert.equal(rec.error, 'junosd shut down')
+    const trail = store.since(0).filter((e) => e.type.startsWith('run.')).map((e) => e.type)
+    assert.deepEqual(trail, ['run.started', 'run.cancelling', 'run.stopped'])
+  })
+
   it('does not report a stopped run on shutdown when the process survived', async () => {
     const { runs, spawnOne } = await manager(async () => {})
     const { run } = spawnOne()

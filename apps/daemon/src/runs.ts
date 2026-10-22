@@ -254,6 +254,14 @@ export class RunManager {
   async closeAll(): Promise<void> {
     await Promise.all(
       [...this.#children.entries()].map(async ([id, entry]) => {
+        // Claim the run before the kill. The exit handler treats a non-zero death as a crash while the
+        // row says running, and it finishes the row before we resume, so the reason has to be here for
+        // that finish to keep: a later #finish will not touch a terminal row.
+        const res = this.#store.db
+          .prepare(`UPDATE run SET status = 'cancelling', error = ? WHERE id = ? AND status = 'running'`)
+          .run('junosd shut down', id)
+        if (Number(res.changes) === 1) this.#store.append('run.cancelling', { runId: id }, id)
+
         const pid = entry.child.pid
         if (pid !== undefined) await this.#signal(pid, true)
         await Promise.race([entry.exited, sleep(this.#confirmMs)])
