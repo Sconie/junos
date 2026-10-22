@@ -254,12 +254,15 @@ export class Gateway {
 
   list(status?: ApprovalStatus): ApprovalRecord[] {
     this.sweepExpired()
-    const rows = (
-      status
-        ? this.#store.db.prepare('SELECT * FROM approval WHERE status = ? ORDER BY requested_at DESC LIMIT 200').all(status)
-        : this.#store.db.prepare('SELECT * FROM approval ORDER BY requested_at DESC LIMIT 200').all()
-    ) as unknown as ApprovalRow[]
-    return rows.map(toRecord)
+    const db = this.#store.db
+    if (status) {
+      return (db.prepare('SELECT * FROM approval WHERE status = ? ORDER BY requested_at DESC LIMIT 200').all(status) as unknown as ApprovalRow[]).map(toRecord)
+    }
+    // Everything still waiting for a decision is always included, however many resolved rows are newer;
+    // only the history of resolved ones is capped.
+    const pending = db.prepare(`SELECT * FROM approval WHERE status = 'pending' ORDER BY requested_at DESC`).all() as unknown as ApprovalRow[]
+    const resolved = db.prepare(`SELECT * FROM approval WHERE status != 'pending' ORDER BY requested_at DESC LIMIT 100`).all() as unknown as ApprovalRow[]
+    return [...pending, ...resolved].map(toRecord)
   }
 
   get(id: string): ApprovalRecord | undefined {
