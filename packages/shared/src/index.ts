@@ -236,6 +236,11 @@ export interface SendMessageRequest {
   /** Optional per-message override; it also becomes the conversation's remembered choice. */
   model?: string
   effort?: Effort
+  /**
+   * Retargets a conversation that has no messages yet. A thread that already has
+   * messages keeps the provider it was started with.
+   */
+  provider?: ProviderId
 }
 
 export type SendMessageResponse =

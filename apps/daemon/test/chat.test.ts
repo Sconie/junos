@@ -352,6 +352,67 @@ describe('the picker changes what is sent', () => {
     assert.deepEqual([byId[two.runId]?.model, byId[two.runId]?.effort], ['default', 'low'])
   })
 
+  it('sends an empty conversation to the provider the picker switched to', async () => {
+    const { create, send, collect, detail, calls, b } = await setup()
+    const conv = await create()
+    const disclosed = await send(conv.id, { content: 'not yet', provider: 'codex', model: '', effort: 'high' })
+    // Claude was never acknowledged; the disclosure must name the provider that will actually receive it.
+    assert.equal(disclosed.http, 409)
+    assert.equal(disclosed.out.status, 'disclosure_required')
+    assert.equal((disclosed.out as { provider?: string }).provider, 'codex')
+    assert.match((disclosed.out as { text?: string }).text ?? '', /Codex \(OpenAI\)/)
+    assert.deepEqual(calls(), [], 'disclosure does not reach a provider')
+    const pending = await detail(conv.id)
+    assert.equal(pending.messages.length, 0)
+    assert.deepEqual([pending.conversation.provider, pending.conversation.model, pending.conversation.effort, pending.conversation.allowedProviders], ['codex', '', 'high', ['codex']])
+
+    assert.equal((await b.post('/api/chat/disclosures/codex/ack')).status, 200)
+    const started = await send(conv.id, { content: 'hello codex', provider: 'codex', model: '', effort: 'high' })
+    assert.equal(started.http, 201, JSON.stringify(started.out))
+    const runId = (started.out as Extract<SendMessageResponse, { status: 'started' }>).runId
+    await collect(runId)
+    await sleep(150)
+    const after = await detail(conv.id)
+    assert.equal(after.conversation.provider, 'codex')
+    assert.equal(after.messages.find((m) => m.role === 'assistant')?.provider, 'codex')
+    const call = calls().at(-1)!
+    assert.equal(call.args[0], 'exec', 'the first message goes to Codex, not the provider the chat was created with')
+    assert.match(call.prompt, /hello codex/)
+    const runs = (await b.json<RunsResponse>('/api/runs')).runs
+    assert.equal(runs.find((r) => r.id === runId)?.provider, 'codex')
+  })
+
+  it('does not retarget a conversation that already has messages', async () => {
+    const { create, ack, started, collect, waitDone, detail, calls, b } = await setup()
+    await ack()
+    await b.post('/api/chat/disclosures/codex/ack')
+    const conv = await create()
+    const first = await started(conv.id, { content: 'stay' })
+    await collect(first.runId)
+    await waitDone(conv.id)
+    const second = await started(conv.id, { content: 'still claude', provider: 'codex', model: '', effort: 'medium' })
+    await collect(second.runId)
+    await waitDone(conv.id)
+    const after = await detail(conv.id)
+    assert.equal(after.conversation.provider, 'claude')
+    assert.deepEqual(after.conversation.allowedProviders, ['claude'])
+    assert.ok(after.messages.filter((m) => m.role === 'assistant').every((m) => m.provider === 'claude'))
+    assert.ok(calls().every((c) => c.args[0] === '-p'))
+  })
+
+  it('does not retarget when the model is not valid for the new provider', async () => {
+    const { create, send, detail, calls } = await setup()
+    const conv = await create({ model: 'opus' })
+    const r = await send(conv.id, { content: 'hi', provider: 'codex', model: 'opus', effort: 'medium' })
+    assert.equal(r.http, 400)
+    assert.equal(r.out.error, 'unknown_model')
+    const after = await detail(conv.id)
+    assert.equal(after.conversation.provider, 'claude')
+    assert.deepEqual(after.conversation.allowedProviders, ['claude'])
+    assert.equal(after.messages.length, 0)
+    assert.deepEqual(calls(), [])
+  })
+
   it('remembers the last choice on the conversation', async () => {
     const { create, ack, started, collect, waitDone, detail } = await setup()
     await ack()

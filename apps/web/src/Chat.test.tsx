@@ -151,7 +151,7 @@ describe('Chat', () => {
 
     await waitFor(() => expect(FakeEventSource.instances.length).toBe(1))
     const sent = calls.find((c) => c.path.endsWith('/messages'))!
-    expect(sent.body).toEqual({ content: 'hello there', model: 'opus', effort: 'high' })
+    expect(sent.body).toEqual({ content: 'hello there', model: 'opus', effort: 'high', provider: 'claude' })
     expect(FakeEventSource.instances[0]!.url).toBe('/api/runs/33333333-3333-4333-8333-333333333333/stream')
 
     const es = FakeEventSource.instances[0]!
@@ -299,6 +299,25 @@ describe('Chat provider picker', () => {
     fireEvent.click(within(effort).getByRole('button', { name: 'Max' }))
     fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'codex' } })
     await waitFor(() => expect(within(effort).getByRole('button', { name: 'Medium' }).getAttribute('aria-pressed')).toBe('true'))
+  })
+
+  it('sends a provider switch on an empty conversation to that provider', async () => {
+    const c = conv({ title: 'Empty chat', provider: 'claude', model: 'opus' })
+    const calls = mockDaemon({ conversations: [c], details: { [c.id]: [] } })
+    render(<Chat />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Empty chat' }))
+    const model = (await screen.findByLabelText('Model')) as HTMLSelectElement
+    await waitFor(() => expect(model.value).toBe('opus'))
+    const provider = screen.getByLabelText('Provider') as HTMLSelectElement
+    expect(provider.disabled).toBe(false)
+    fireEvent.change(provider, { target: { value: 'codex' } })
+    type('hello codex')
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(calls.some((call) => call.path.endsWith('/messages'))).toBe(true))
+    const sent = calls.find((call) => call.path.endsWith('/messages'))!
+    expect(sent.path).toBe(`/conversations/${c.id}/messages`)
+    expect(sent.body).toEqual({ content: 'hello codex', model: '', effort: 'medium', provider: 'codex' })
+    expect(calls.filter((call) => call.path === '/conversations' && call.method === 'POST')).toHaveLength(0)
   })
 
   it('locks the provider once a conversation has messages', async () => {

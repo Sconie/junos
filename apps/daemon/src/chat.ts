@@ -203,10 +203,23 @@ export class ChatService {
   async send(conversationId: string, req: SendMessageRequest): Promise<SendMessageResponse> {
     const detail = this.get(conversationId)
     if (!detail) throw new ChatError(404, 'not_found', 'No such conversation')
-    const conv = detail.conversation
+    let conv = detail.conversation
     const content = typeof req.content === 'string' ? req.content.trim() : ''
     if (!content) throw new ChatError(400, 'empty', 'Write something to send')
     if (content.length > MAX_CONTENT) throw new ChatError(400, 'too_long', `Messages are limited to ${MAX_CONTENT} characters`)
+
+    // Nothing has been sent yet, so the picker can still choose the vendor. Apply it
+    // before the disclosure check; a thread that already has messages keeps its provider.
+    if (detail.messages.length === 0 && req.provider && req.provider !== conv.provider) {
+      const next = this.#adapter(req.provider)
+      const nextModel = req.model ?? ''
+      const nextEffort = (req.effort ?? conv.effort) as Effort
+      this.#checkModel(next, nextModel, nextEffort)
+      this.#store.db
+        .prepare('UPDATE conversation SET provider = ?, model = ?, effort = ?, allowed_providers_json = ?, updated_at = ? WHERE id = ?')
+        .run(next.id, nextModel, nextEffort, JSON.stringify([next.id]), this.#iso(), conversationId)
+      conv = this.#conversation(conversationId)!
+    }
 
     const model = req.model ?? conv.model
     const effort = (req.effort ?? conv.effort) as Effort

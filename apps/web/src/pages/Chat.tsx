@@ -145,7 +145,7 @@ export default function Chat() {
   const unavailable = providerStatus && !providerStatus.available ? (providerStatus.reason ?? 'The provider is not available.') : null
   const efforts = claude?.models.find((m) => m.id === model)?.efforts ?? []
   const busy = sending || Boolean(streamingId) || live !== null
-  // A conversation belongs to one provider for its whole life (history replay to another is a later step).
+  // Messages stay with the provider they were started on (history replay to another is a later step).
   const providerLocked = (detail?.messages.length ?? 0) > 0
 
   function chooseProvider(next: ProviderChoice) {
@@ -180,7 +180,7 @@ export default function Chat() {
       const res = await api(`/conversations/${id}/messages`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ content, model, effort }),
+        body: JSON.stringify({ content, model, effort, provider }),
       })
       const body = (await res.json()) as SendMessageResponse & { message?: string; error?: string }
       if (body.status === 'disclosure_required') {
