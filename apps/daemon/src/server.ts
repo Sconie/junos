@@ -276,19 +276,19 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         return
       }
       if (req.method === 'GET' && url.pathname === '/api/runs') {
-        return sendJson(res, 200, { paused: runMgr.paused, runs: runMgr.list() } satisfies RunsResponse)
+        return sendJson(res, 200, { paused: runMgr.paused, pausedAt: runMgr.pausedAt, runs: runMgr.list() } satisfies RunsResponse)
       }
       if (req.method === 'POST' && url.pathname === '/api/stop') {
         // Stop everything and pause. Resolves when each run is stopped, or honestly "not confirmed".
         runMgr.stop().then(
-          () => sendJson(res, 200, { paused: runMgr.paused, runs: runMgr.list() } satisfies RunsResponse),
+          () => sendJson(res, 200, { paused: runMgr.paused, pausedAt: runMgr.pausedAt, runs: runMgr.list() } satisfies RunsResponse),
           () => sendJson(res, 500, { error: 'stop failed' }),
         )
         return
       }
       if (req.method === 'POST' && url.pathname === '/api/resume') {
         runMgr.resume()
-        return sendJson(res, 200, { paused: runMgr.paused, runs: runMgr.list() } satisfies RunsResponse)
+        return sendJson(res, 200, { paused: runMgr.paused, pausedAt: runMgr.pausedAt, runs: runMgr.list() } satisfies RunsResponse)
       }
       const runStop = RUN_STOP_PATH.exec(url.pathname)
       if (req.method === 'POST' && runStop) {

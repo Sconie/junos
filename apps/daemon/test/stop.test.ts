@@ -6,7 +6,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, it } from 'node:test'
 import type { ActionResponse, ApprovalRecord, RunRecord, RunsResponse } from '@junos/shared'
 import { RunManager } from '../src/runs.ts'
-import { Gateway } from '../src/gateway.ts'
+import { Gateway, testTools } from '../src/gateway.ts'
 import { EventStore } from '../src/store.ts'
 import { boot, tempHome, type BootOptions } from './harness.ts'
 
@@ -316,6 +316,78 @@ describe('when a process will not die', () => {
     assert.match(done[0]?.error ?? '', /did not exit/)
     assert.ok(store.since(0).some((e) => e.type === 'run.stop_unconfirmed'))
     assert.ok(alive(pid))
+  })
+})
+
+describe('stop edge cases found in review', () => {
+  async function manager(signal?: (pid: number, force: boolean) => Promise<void>) {
+    const { home, cleanup } = tempHome()
+    cleanups.push(cleanup)
+    const store = new EventStore(join(home, 'junos.db'))
+    cleanups.push(async () => {
+      await sleep(150)
+      store.close()
+    })
+    const effects: Array<Record<string, unknown>> = []
+    const gateway = new Gateway({ store, tools: testTools(effects) })
+    const runs = new RunManager({ store, gateway, graceMs: 100, confirmMs: 100, signal })
+    const spawnOne = () => {
+      const run = runs.start({ kind: 'test', source: 'test', command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] })
+      const pid = runs.pid(run.id)!
+      cleanups.push(async () => {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          /* gone */
+        }
+        await waitDead(pid)
+      })
+      return { run, pid }
+    }
+    return { store, gateway, runs, spawnOne }
+  }
+
+  it('corrects a false "stop not confirmed" when the process does die a moment later', async () => {
+    // The kill is issued but takes effect after the confirmation window.
+    const slowKill = async (pid: number, force: boolean) => {
+      if (force) setTimeout(() => process.kill(pid, 'SIGKILL'), 400)
+    }
+    const { runs, spawnOne, store } = await manager(slowKill)
+    const { run } = spawnOne()
+    const [first] = await runs.stop(run.id)
+    assert.equal(first?.status, 'stop_unconfirmed')
+    const end = Date.now() + 4000
+    while (runs.get(run.id)?.status !== 'stopped' && Date.now() < end) await sleep(50)
+    assert.equal(runs.get(run.id)?.status, 'stopped', 'a late exit corrects the record')
+    assert.ok(store.since(0).some((e) => e.type === 'run.stopped' && e.payload.late === true))
+  })
+
+  it('does not report a stopped run on shutdown when the process survived', async () => {
+    const { runs, spawnOne } = await manager(async () => {})
+    const { run } = spawnOne()
+    await runs.closeAll()
+    const rec = runs.get(run.id)!
+    assert.equal(rec.status, 'stop_unconfirmed')
+    assert.match(rec.error ?? '', /still running/)
+  })
+
+  it('records the side effects of a run whose stop could not be confirmed', async () => {
+    const { runs, spawnOne, gateway } = await manager(async () => {})
+    const { run } = spawnOne()
+    const done = await gateway.request('ui', { tool: 'test.write', args: { path: '/work/a.txt' }, runId: run.id })
+    assert.equal(done.status, 'executed')
+    const [stopped] = await runs.stop(run.id)
+    assert.equal(stopped?.status, 'stop_unconfirmed')
+    assert.deepEqual(stopped?.sideEffects.map((e) => e.target), ['/work/a.txt'])
+  })
+
+  it('reports when the current Stop began, and clears it on Resume', async () => {
+    const { b, stopAll } = await setup()
+    assert.equal((await b.json<RunsResponse>('/api/runs')).pausedAt, null)
+    const after = await stopAll()
+    assert.ok(after.pausedAt && !Number.isNaN(Date.parse(after.pausedAt)))
+    const resumed = (await (await b.post('/api/resume')).json()) as RunsResponse
+    assert.equal(resumed.pausedAt, null)
   })
 })
 

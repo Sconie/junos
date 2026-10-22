@@ -86,6 +86,7 @@ export class RunManager {
   readonly #signal: (pid: number, force: boolean) => Promise<void>
   readonly #children = new Map<string, { child: ChildProcess; exited: Promise<void> }>()
   #paused = false
+  #pausedAt: string | null = null
 
   constructor(options: RunManagerOptions) {
     this.#store = options.store
@@ -107,6 +108,11 @@ export class RunManager {
 
   get paused(): boolean {
     return this.#paused
+  }
+
+  /** When the current Stop began, so the UI lists only that stop's effects. Null while running normally. */
+  get pausedAt(): string | null {
+    return this.#pausedAt
   }
 
   start(spec: RunSpec): RunRecord {
@@ -153,12 +159,26 @@ export class RunManager {
 
   #onExit(id: string, code: number | null, signal: NodeJS.Signals | null): void {
     const row = this.#row(id)
-    if (!row || TERMINAL.includes(row.status)) return
+    if (!row) return
+    if (row.status === 'stop_unconfirmed') {
+      // It did die, just after we gave up waiting: correct the record instead of leaving a false alarm.
+      this.#confirmLate(id, code, signal)
+      return
+    }
+    if (TERMINAL.includes(row.status)) return
     if (row.status === 'cancelling') {
       this.#finish(id, 'stopped', { exitCode: code, signal })
     } else {
       this.#finish(id, code === 0 ? 'finished' : 'failed', { exitCode: code, signal })
     }
+  }
+
+  #confirmLate(id: string, code: number | null, signal: NodeJS.Signals | null): void {
+    const res = this.#store.db
+      .prepare(`UPDATE run SET status = 'stopped', finished_at = ?, exit_code = ?, signal = ?, error = NULL WHERE id = ? AND status = 'stop_unconfirmed'`)
+      .run(new Date(this.#now()).toISOString(), code, signal, id)
+    if (Number(res.changes) !== 1) return
+    this.#store.append('run.stopped', { runId: id, status: 'stopped', exitCode: code, signal, late: true }, id)
   }
 
   #finish(id: string, status: RunStatus, info: { exitCode?: number | null; signal?: string | null; error?: string } = {}): void {
@@ -169,7 +189,7 @@ export class RunManager {
       )
       .run(status, new Date(this.#now()).toISOString(), info.exitCode ?? null, info.signal ?? null, info.error ?? null, id)
     if (Number(res.changes) !== 1) return
-    const sideEffects = status === 'stopped' ? this.#recordSideEffects(id) : []
+    const sideEffects = status === 'stopped' || status === 'stop_unconfirmed' ? this.#recordSideEffects(id) : []
     this.#store.append(
       `run.${status === 'stop_unconfirmed' ? 'stop_unconfirmed' : status}`,
       { runId: id, status, exitCode: info.exitCode ?? null, signal: info.signal ?? null, sideEffects: sideEffects.length },
@@ -186,7 +206,10 @@ export class RunManager {
   /** Stop one run, or (no id) every run and pause everything new. Resolves once the outcome is known. */
   async stop(runId?: string): Promise<RunRecord[]> {
     const targets = runId ? [runId] : [...this.#children.keys()]
-    if (!runId) this.#paused = true
+    if (!runId) {
+      if (!this.#paused) this.#pausedAt = new Date(this.#now()).toISOString()
+      this.#paused = true
+    }
     this.#store.append('stop.requested', { scope: runId ?? 'all', runs: targets, paused: this.#paused })
     const done = await Promise.all(targets.map((id) => this.#stopOne(id)))
     return done.filter((r): r is RunRecord => r !== undefined)
@@ -210,7 +233,7 @@ export class RunManager {
     void this.#signal(pid, false)
     const polite = await Promise.race([entry.exited.then(() => true), sleep(this.#graceMs).then(() => false)])
     if (!polite) {
-      void this.#signal(pid, true)
+      await this.#signal(pid, true) // the kill must be issued before we start counting the confirmation window
       await Promise.race([entry.exited, sleep(this.#confirmMs)])
     }
     if (this.#children.has(id) || alive(pid)) {
@@ -223,6 +246,7 @@ export class RunManager {
   resume(): void {
     if (!this.#paused) return
     this.#paused = false
+    this.#pausedAt = null
     this.#store.append('stop.resumed', {})
   }
 
@@ -233,7 +257,12 @@ export class RunManager {
         const pid = entry.child.pid
         if (pid !== undefined) await this.#signal(pid, true)
         await Promise.race([entry.exited, sleep(this.#confirmMs)])
-        this.#finish(id, 'stopped', { error: 'junosd shut down' })
+        if (pid !== undefined && alive(pid)) {
+          // An orphan outlives us; say so, so the record is not a comforting lie.
+          this.#finish(id, 'stop_unconfirmed', { error: 'junosd shut down while the process was still running' })
+        } else {
+          this.#finish(id, 'stopped', { error: 'junosd shut down' })
+        }
       }),
     )
   }
