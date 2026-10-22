@@ -19,3 +19,5 @@ npm run dev
 ```
 
 Stack: Vite, React, TypeScript, React Router.
+
+Requires Node.js 20.19+ or 22.12+. Run `npm run lint`, `npm run typecheck`, and `npm run test`.
