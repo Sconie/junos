@@ -2,11 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AuthGate } from './lib/auth'
 import Pair from './pages/Pair'
+import { DaemonStatus } from './lib/daemon'
 
 type Call = { path: string; method: string; headers: Headers; body?: string }
 
 /** A tiny stand-in for junosd's pairing endpoints. */
-function fakeDaemon(options: { paired?: boolean; code?: string } = {}) {
+function fakeDaemon(options: { paired?: boolean; code?: string; logoutStatus?: number } = {}) {
   const calls: Call[] = []
   let paired = options.paired ?? false
   const json = (body: unknown, status = 200) =>
@@ -24,8 +25,9 @@ function fakeDaemon(options: { paired?: boolean; code?: string } = {}) {
         return json({ paired: true, csrf: 'tok' })
       }
       if (path === '/api/session/logout') {
-        paired = false
-        return json({ paired: false })
+        const status = options.logoutStatus ?? 200
+        if (status === 200) paired = false
+        return json(status === 200 ? { paired: false } : { error: 'boom' }, status)
       }
       return json({ error: 'not found' }, 404)
     }),
@@ -102,5 +104,31 @@ describe('pairing flow', () => {
       expect(localStorage.length).toBe(0)
       expect(sessionStorage.length).toBe(0)
     })
+  })
+})
+
+describe('unpair', () => {
+  function renderStatus() {
+    render(
+      <AuthGate pairing={<Pair />}>
+        <DaemonStatus />
+      </AuthGate>,
+    )
+  }
+
+  it('goes back to the pairing screen once the daemon confirms', async () => {
+    fakeDaemon({ paired: true })
+    renderStatus()
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpair' }))
+    expect(await screen.findByRole('heading', { name: 'Pair this browser' })).toBeTruthy()
+  })
+
+  it('keeps the session and says so when the daemon could not revoke it', async () => {
+    fakeDaemon({ paired: true, logoutStatus: 500 })
+    renderStatus()
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpair' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not unpair')
+    expect(screen.queryByRole('heading', { name: 'Pair this browser' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Unpair' })).toBeTruthy()
   })
 })

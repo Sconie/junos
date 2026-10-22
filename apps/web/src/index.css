@@ -172,3 +172,4 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .approval[data-status="expired"], .approval[data-status="denied"], .approval[data-status="consumed"] { opacity: 0.75; }
 .dev-panel { margin-top: 24px; }
 @media (max-width: 720px) { .approvals-layout { grid-template-columns: 1fr; } }
+.daemon-unpair-error { color: var(--warn); font-size: 12px; }

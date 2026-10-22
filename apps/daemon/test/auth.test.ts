@@ -162,6 +162,29 @@ describe('pairing', () => {
     assert.equal((await b.get('/api/status')).status, 401, 'the old cookie is dead server-side')
   })
 
+  it('ends a revoked session event stream at once and leaves other session streams alone', async () => {
+    const { d } = await daemon()
+    const one = await d.pair()
+    const code = ((await (await one.post('/api/pairing/code')).json()) as { code: string }).code
+    const two = d.browser()
+    assert.equal((await two.pair(code)).status, 200)
+
+    const streamOne = await openSse(d.url, { cookie: one.cookie })
+    const streamTwo = await openSse(d.url, { cookie: two.cookie })
+    cleanups.push(() => streamOne.close(), () => streamTwo.close())
+    await streamOne.waitFor((m) => m.event === 'ready')
+    await streamTwo.waitFor((m) => m.event === 'ready')
+
+    await one.post('/api/session/logout')
+    await Promise.race([streamOne.ended, new Promise((_, rej) => setTimeout(() => rej(new Error('stream stayed open after logout')), 3000))])
+
+    const before = streamTwo.events().length
+    d.store.append('test.after-logout')
+    await streamTwo.waitFor((m) => (m.data as { type?: string }).type === 'test.after-logout')
+    assert.ok(streamTwo.events().length > before, 'the other session still gets events')
+    assert.ok(!streamOne.events().some((e) => e.type === 'test.after-logout'), 'the revoked session got nothing more')
+  })
+
   it('announces a fresh code once the last paired browser is gone', async () => {
     const { d } = await daemon()
     const b = await d.pair()

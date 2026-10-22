@@ -10,7 +10,8 @@ interface AuthValue {
   /** Re-reads the session. Only ever flips the UI to "unpaired"; an unreachable daemon is the daemon banner's job. */
   recheck: () => Promise<void>
   pair: (code: string) => Promise<'ok' | 'invalid' | 'expired' | 'locked' | 'error'>
-  unpair: () => Promise<void>
+  /** True once the daemon confirmed the session is revoked. A failed call leaves the session in place. */
+  unpair: () => Promise<boolean>
 }
 
 const AuthContext = createContext<AuthValue>({
@@ -18,7 +19,7 @@ const AuthContext = createContext<AuthValue>({
   api: (path, init) => fetch(`${API_PREFIX}${path}`, init),
   recheck: async () => {},
   pair: async () => 'error',
-  unpair: async () => {},
+  unpair: async () => true,
 })
 
 // oxlint-disable-next-line react/only-export-components
@@ -97,9 +98,16 @@ export function AuthGate({ children, pairing }: { children: ReactNode; pairing: 
   )
 
   const unpair = useCallback(async () => {
-    await api('/session/logout', { method: 'POST' }).catch(() => undefined)
+    try {
+      const res = await api('/session/logout', { method: 'POST' })
+      // 401 means the session was already gone, which is the outcome we wanted.
+      if (!res.ok && res.status !== 401) return false
+    } catch {
+      return false
+    }
     csrf.current = ''
     setState('unpaired')
+    return true
   }, [api])
 
   const value = useMemo(() => ({ state, api, recheck, pair, unpair }), [state, api, recheck, pair, unpair])
