@@ -3,24 +3,19 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": { "node": ">=24" },
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
+    "dev:web": "npm run dev -w @junos/web",
+    "dev:daemon": "npm run start -w @junos/daemon",
+    "build": "npm run build -w @junos/web",
+    "typecheck": "tsc -b apps/daemon packages/shared && tsc -b apps/web",
     "lint": "oxlint",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "react-router-dom": "^7.18.4"
+    "test": "npm test -w @junos/daemon"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
-    "@types/react": "^19.3.0",
-    "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.1.2",
     "oxlint": "^1.88.0",
-    "typescript": "~6.0.3",
-    "vite": "^8.3.4"
+    "typescript": "~6.0.3"
   }
 }

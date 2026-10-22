@@ -22,3 +22,11 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# junosd local data
+.tmp-home
+*.db
+*.db-wal
+*.db-shm
+junosd.lock
+*.tsbuildinfo

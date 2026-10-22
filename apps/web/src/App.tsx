@@ -5,6 +5,7 @@ import Schedules from './pages/Schedules'
 import Hermes from './pages/Hermes'
 import Files from './pages/Files'
 import Connections from './pages/Connections'
+import { DaemonBanner, DaemonStatus } from './lib/daemon'
 
 const nav = [
   { to: '/', label: 'Overview', icon: '◎' },
@@ -28,8 +29,10 @@ export default function App() {
             </NavLink>
           ))}
         </nav>
+        <DaemonStatus />
       </aside>
       <main className="content">
+        <DaemonBanner />
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/chat" element={<Chat />} />
