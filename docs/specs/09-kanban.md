@@ -22,11 +22,12 @@ title, body (markdown), creator (`jonas | hermes | scout | workflow:<id>`), assi
 5. **Triage pass** (workflow, daily): reads Ideas, suggests priority, labels, project, duplicates, and rewrites vague titles. Suggestions appear as an Inbox item, not silent edits.
 
 ## Hermes pickup rules
-- Only cards in Ready with assignee `hermes` (or label `hermes`).
+- Only cards in a column of `kind=ready` with assignee `hermes`. A label alone never triggers execution and never overrides an explicit assignee.
+- **Atomic claim**: pickup is `UPDATE kanban_card SET claimed_by, claim_lease_expires WHERE id=? AND claimed_by IS NULL`; the lease is renewed while working and expires after a crash/restart, returning the card to Ready with a note. Duplicate pickup is impossible.
 - One card In progress at a time by default (configurable).
 - On start: card moves to In progress and gets a run link. On finish: moves to Review with a summary and artifacts. On failure or block: moves to Blocked with the reason and an Inbox failure.
 - Autonomy level (06) still applies: pickup does not bypass approvals.
-- Hermes never moves a card to Done; Jonas does.
+- Hermes never moves a card to Done; Jonas does. Card text from capture, Scout or the web is untrusted: rendered with the safe pipeline in 12 and wrapped as data when given to Hermes.
 
 ## Screen (matches mockup)
 Board with swimlane toggle (by project / assignee). Filters: mine, Hermes, project, label. Drag and drop. Card drawer on the right. Top bar shows "Hermes is working on: <card>". Add-card inline at the bottom of each column.

@@ -35,7 +35,14 @@ project(id, name, path, repo_url, tags_json, last_activity_at)
 file_index(id, path, project_id, mime, size, mtime, ai_tags_json, summary, embedding_ref)
 memory_item(id, owner, key, value_md, pinned, updated_at)   -- Hermes memory, editable
 
-event(id, type, ref_id, payload_json, created_at)           -- append-only
+scheduled_run(id, task_id, due_at, idempotency_key UNIQUE, status, lease_owner, lease_expires_at, attempt, run_id)
+workflow_version(id, workflow_id, version, definition_json, created_at)
+approval(id, run_id, action_digest, action_json, class, project_id, status, requested_at, expires_at,
+         decided_by, decided_channel, decided_at)          -- status changes are compare-and-set; single use
+approval_rule(id, project_id, tool, arg_pattern, class, expires_at, max_uses, uses, created_at)
+provider_allow(id, scope, scope_ref, providers_json)        -- allowed providers per conversation/workflow
+
+event(id, seq INTEGER UNIQUE AUTOINCREMENT, type, ref_id, payload_json, created_at)  -- append-only; seq drives SSE resume
 ```
 
 ## Invariants
@@ -43,6 +50,8 @@ event(id, type, ref_id, payload_json, created_at)           -- append-only
 - `message.run_id` links every assistant message to the run that produced it (audit trail).
 - `inbox_item.status`: `new | seen | snoozed | done | dismissed`.
 - Secrets are never stored in this DB; see 12.
+- `event.payload_json` holds references and minimal metadata, not message bodies or file content. Deleting a source row also removes derived rows (events payloads that embedded it, FTS, embeddings); see retention in 12.
+- Kanban `column` is a key into `kanban_board.columns_json`, each column with a `kind` (`ideas | ready | active | review | done | blocked | custom`); automation depends on `kind`, never on the display name.
 
 ## Backups
-Nightly copy of `junos.db` to `~/.junos/backups/` (keep 14). Export to JSON per table on demand.
+Nightly SQLite online backup (backup API or `VACUUM INTO`, never a plain copy of a WAL file) to `~/.junos/backups/`, integrity-checked, keep 14. Export to JSON per table on demand.

@@ -45,14 +45,15 @@ Right 60%: Activity timeline of steps as cards with icon, summary, duration, exp
 Bottom tabs: **Memory** (editable chips with pin), **Skills/Tools** (toggles), **Logs** (raw), **Queue** (tasks handed over from Tasks/Kanban).
 
 ## Behaviors
-- **Autonomy levels**: Ask-first (every outward/destructive step needs approval), Balanced (default; reads free, writes in allowlisted folders free, shell/network/mail ask), Autonomous (log only). Level is per project.
+- **Autonomy levels**: Ask-first, Balanced (default), Autonomous (wider write-local in allowlisted worktrees only). Per project. They never override the invariants in 12: external-send, destructive and spend actions always need a digest-bound approval enforced by the junosd gateway.
 - **Approvals** appear as Inbox items and as a banner in the console; the step waits (timeout configurable, default 30 min, then auto-deny).
 - **Kanban link**: Hermes can create cards, move its own cards, and pick up cards labelled `hermes` in the Ready column (see 09).
-- **Kill switch**: Stop is always visible; Stop cancels the current step and drops queue to paused.
+- **Stop** follows the state machine in 12 (requested, cancelling, stopped). The header shows `stop not confirmed` if the VPS is unreachable; completed side effects are listed.
 - **Memory hygiene**: memory writes by Hermes are proposed as a diff in the Memory tab until Jonas pins them (optional setting).
 - **Handoff from anywhere**: "Give to Hermes" button on files, projects, chat messages and cards creates a directive with the context attached.
 
 ## Acceptance criteria
+- The mock is validated against a recorded real Hermes session (including Telegram-originated activity) before Phase 3 is done.
 - With a mock Hermes, the console renders status, a live step stream, queue and memory edit.
 - A step that needs approval pauses and is resolved from the Inbox.
 - Stop halts within a few seconds and is logged.

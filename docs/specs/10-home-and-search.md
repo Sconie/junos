@@ -25,3 +25,8 @@ Full-text (SQLite FTS5) across messages, cards, findings, inbox items, file name
 ## Acceptance criteria
 - Home renders in under 1 second from local data; a failing card does not break the page.
 - ⌘K opens in under 100 ms and can create a card without leaving the page.
+
+## Rev 2 additions
+- `GET /home` returns per-card payloads with `status: ok | error | stale` and `as_of`, so independent loading has a defined contract; cards also update from the SSE stream.
+- ⌘K navigation never sends text to a model on its own; "Ask <model>" is an explicit row, and the provider disclosure from 04 applies.
+- Home is a summary; the Inbox is the authority for decisions.

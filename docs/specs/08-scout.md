@@ -41,3 +41,8 @@ Dismiss reasons (`not relevant`, `already know`, `too risky`, `later`) are store
 ## Open questions
 - Cadence: daily for releases, weekly for ideas?
 - Should Scout be allowed to propose a draft PR in a branch? Defer until trust is built.
+
+## Rev 2 additions
+- Read-only must hold across the pipeline: collection uses fetch-only clients, Assess runs with tools disabled, and "Make card" / "Ask Claude" are separate user-triggered steps. Web content is stored as data and rendered through the safe pipeline in 12.
+- The "Self" source reads only aggregate counters (error rates, durations), never message or file content, and is off until enabled.
+- Editable sources are validated: only http(s) feeds and allowlisted local commands; no arbitrary shell as a source.

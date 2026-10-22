@@ -38,3 +38,11 @@ GET  /conversations?cursor=
 ## Open questions
 - Voice input? Skip for v1.
 - Per-conversation system prompts / personas: v2.
+
+## Rev 2 additions
+- **Allowed providers**: each conversation shows which providers may receive its context; switching model to a different provider, fallback, and auto-title generation respect that list, and the first time context goes to a new provider the composer shows a one-line disclosure.
+- **Model switch**: shows what history is replayed and warns if attachments/tool results will be sent to the new provider.
+- **Tool toggles** are requests, not permissions: every tool call goes through the gateway (12). Toggling Files on lets the model *ask* to read; it does not grant folder access beyond the project allowlist.
+- **Attaching a project folder** attaches a manifest and on-demand reads within the allowlist, never the whole tree; size limits and `.junosignore` apply.
+- Markdown, links and images render through the safe pipeline in 12.
+- Enter in the composer only sends; ⌘K navigation never submits a prompt to a model without an explicit send.

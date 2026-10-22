@@ -3,11 +3,12 @@
 ## Shape
 ```
 Browser (Vite + React + TS)          <- the current repo
-   |  HTTP + SSE/WebSocket (localhost, token-protected)
+   |  HTTP + SSE (localhost, cookie-authenticated; see 12)
 Local daemon  "junosd"  (Node + TypeScript)
    |- API layer (REST + event stream)
    |- Event bus + SQLite (better-sqlite3 or libsql), one file: ~/.junos/junos.db
-   |- Scheduler (cron + one-off, persisted, catch-up policy)
+   |- Execution gateway (policy, approvals, audit; see 12)
+   |- Scheduler (persisted runs, atomic claim, bounded catch-up; see 05)
    |- Workflow runner (steps, retries, approvals)
    |- Provider adapters (one per subscription)
    |- Hermes bridge
@@ -35,6 +36,15 @@ interface ProviderAdapter {
 }
 ```
 `RunRequest` = `{ model, effort, messages, cwd?, tools?, systemPrompt? }`. Effort is mapped per provider (see 03). Adapters are the only code that knows how a provider is reached.
+
+## Transport decision: SSE
+One-way server-to-browser updates use **Server-Sent Events**; commands use plain HTTP. No WebSocket. Run output streams on the same SSE channel per subscription.
+
+## Event stream contract
+Every event has a monotonically increasing `seq`. The client connects with `Last-Event-ID`; the daemon replays from that `seq` or, if it is too old, sends `resync` and the client refetches snapshots. Events are at-least-once, so handlers are idempotent by `seq`. The UI shows a "reconnecting" banner and never acts on stale approvals (it re-reads approval status before enabling Approve).
+
+## Execution gateway
+All side effects go through the gateway described in 12. Adapters and Hermes produce action requests; only the gateway executes or approves them.
 
 ## Event bus
 Append-only `events` table, SSE to the UI. Event types: `chat.message`, `run.started|step|finished|failed`, `task.fired`, `inbox.item`, `kanban.card.*`, `scout.finding`, `connection.changed`. Views (Inbox, Home feed, activity timeline) are queries over events plus a few materialized tables.

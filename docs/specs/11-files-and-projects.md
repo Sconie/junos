@@ -32,3 +32,8 @@ Content is only sent to a model when Jonas attaches it or a workflow he enabled 
 
 ## Open questions
 - Read-only first? Proposed: yes; edits only through Hermes or a CLI model under the approval policy.
+
+## Rev 2 additions
+- **Revocation**: removing a folder deletes its index rows, FTS entries, summaries, embeddings and caches, and cancels queued jobs; the UI confirms what was removed.
+- Search respects exclusions (`.junosignore`, secret patterns) at query time as well as index time, and shows when AI processing is on for a folder (badge on the folder row).
+- File previews render in a sandboxed iframe (12). Attaching a project to chat sends a manifest plus on-demand reads, not the tree.
