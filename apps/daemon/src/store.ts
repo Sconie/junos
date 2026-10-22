@@ -25,6 +25,15 @@ const MIGRATIONS = [
      payload_json TEXT NOT NULL,
      created_at TEXT NOT NULL
    )`,
+  // Browser sessions: only a hash of the cookie token is stored.
+  `CREATE TABLE session (
+     id TEXT PRIMARY KEY,
+     token_hash TEXT NOT NULL UNIQUE,
+     csrf TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     last_seen_at TEXT NOT NULL,
+     revoked_at TEXT
+   )`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */
@@ -79,6 +88,30 @@ export class EventStore {
   firstSeq(): number {
     const row = this.#db.prepare('SELECT MIN(seq) AS seq FROM event').get() as { seq: number | bigint | null }
     return Number(row.seq ?? 0)
+  }
+
+  createSession(id: string, tokenHash: string, csrf: string): void {
+    const now = new Date().toISOString()
+    this.#db
+      .prepare('INSERT INTO session (id, token_hash, csrf, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?)')
+      .run(id, tokenHash, csrf, now, now)
+  }
+
+  /** The live (not revoked) session for a token hash. */
+  sessionByHash(tokenHash: string): { id: string; csrf: string } | undefined {
+    const row = this.#db
+      .prepare('SELECT id, csrf FROM session WHERE token_hash = ? AND revoked_at IS NULL')
+      .get(tokenHash) as { id: string; csrf: string } | undefined
+    return row && { id: row.id, csrf: row.csrf }
+  }
+
+  revokeSession(id: string): void {
+    this.#db.prepare('UPDATE session SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(new Date().toISOString(), id)
+  }
+
+  activeSessionCount(): number {
+    const row = this.#db.prepare('SELECT COUNT(*) AS n FROM session WHERE revoked_at IS NULL').get() as { n: number | bigint }
+    return Number(row.n)
   }
 
   subscribe(listener: Listener): () => void {

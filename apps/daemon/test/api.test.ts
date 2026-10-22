@@ -1,50 +1,55 @@
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import type { HealthResponse, ProvidersResponse } from '@junos/shared'
+import type { HealthResponse, ProvidersResponse, StatusResponse } from '@junos/shared'
 import { startDaemon } from '../src/server.ts'
-import { boot, brokenCli, fakeProviderEnv, openSse, tempHome } from './harness.ts'
+import { Browser, boot, brokenCli, fakeProviderEnv, openSse, tempHome } from './harness.ts'
 
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => {
   for (const fn of cleanups.splice(0).reverse()) await fn()
 })
 
+/** A daemon plus a browser that has already paired with it. */
 async function setup(env = fakeProviderEnv()) {
   const { home, cleanup } = tempHome()
-  const daemon = await boot(home, env)
+  const daemon = await boot(home, { env })
   cleanups.push(cleanup, () => daemon.close())
-  return { home, daemon }
+  const b = await daemon.pair()
+  return { home, daemon, b }
 }
 
 /** Kill a child and wait until it has really exited (Windows keeps file handles until then). */
 async function reap(child: ChildProcess) {
   if (child.exitCode !== null || child.signalCode !== null) return
-  const exited = new Promise((r) => child.once("exit", r))
-  child.kill("SIGKILL")
+  const exited = new Promise((r) => child.once('exit', r))
+  child.kill('SIGKILL')
   await exited
 }
 
-const getJson = async <T>(url: string) => (await fetch(url)).json() as Promise<T>
-
 describe('health', () => {
-  it('reports identity and the last event seq', async () => {
+  it('answers a public liveness probe that reveals nothing about the machine', async () => {
     const { daemon } = await setup()
-    const res = await fetch(`${daemon.url}/api/health`)
+    const res = await daemon.browser().get('/api/health')
     assert.equal(res.status, 200)
     const body = (await res.json()) as HealthResponse
-    assert.equal(body.ok, true)
+    assert.deepEqual(Object.keys(body).sort(), ['name', 'ok', 'version'])
     assert.equal(body.name, 'junosd')
+  })
+
+  it('gives a paired browser the detailed status', async () => {
+    const { b } = await setup()
+    const body = await b.json<StatusResponse>('/api/status')
     assert.equal(body.pid, process.pid)
     assert.ok(body.lastSeq >= 1, 'daemon.started is already in the event table')
   })
 
   it('answers unknown routes with 404 json', async () => {
-    const { daemon } = await setup()
-    const res = await fetch(`${daemon.url}/api/nope`)
+    const { b } = await setup()
+    const res = await b.get('/api/nope')
     assert.equal(res.status, 404)
     assert.deepEqual(await res.json(), { error: 'not found' })
   })
@@ -52,8 +57,8 @@ describe('health', () => {
 
 describe('event stream', () => {
   it('replays history, then signals ready, then streams live events', async () => {
-    const { daemon } = await setup()
-    const sse = await openSse(daemon.url)
+    const { daemon, b } = await setup()
+    const sse = await openSse(daemon.url, { cookie: b.cookie })
     cleanups.push(() => sse.close())
     assert.equal(sse.status, 200)
     assert.match(sse.contentType ?? '', /text\/event-stream/)
@@ -71,21 +76,21 @@ describe('event stream', () => {
   })
 
   it('resumes from Last-Event-ID without repeating events', async () => {
-    const { daemon } = await setup()
+    const { daemon, b } = await setup()
     const a = daemon.store.append('test.a')
-    const b = daemon.store.append('test.b')
-    const sse = await openSse(daemon.url, a.seq)
+    const second = daemon.store.append('test.b')
+    const sse = await openSse(daemon.url, { lastEventId: a.seq, cookie: b.cookie })
     cleanups.push(() => sse.close())
     await sse.waitFor((m) => m.event === 'ready')
     assert.deepEqual(
       sse.events().map((e) => e.seq),
-      [b.seq],
+      [second.seq],
     )
   })
 
   it('sends resync when Last-Event-ID is ahead of the daemon', async () => {
-    const { daemon } = await setup()
-    const sse = await openSse(daemon.url, daemon.store.lastSeq() + 100)
+    const { daemon, b } = await setup()
+    const sse = await openSse(daemon.url, { lastEventId: daemon.store.lastSeq() + 100, cookie: b.cookie })
     cleanups.push(() => sse.close())
     const resync = await sse.waitFor((m) => m.event === 'resync')
     assert.equal((resync.data as { lastSeq: number }).lastSeq, daemon.store.lastSeq())
@@ -93,8 +98,8 @@ describe('event stream', () => {
   })
 
   it('keeps the connection alive with heartbeats', async () => {
-    const { daemon } = await setup()
-    const res = await fetch(`${daemon.url}/api/events`)
+    const { b } = await setup()
+    const res = await b.get('/api/events')
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let text = ''
@@ -104,16 +109,18 @@ describe('event stream', () => {
     assert.match(text, /event: heartbeat/)
   })
 
-  it('survives a restart: seq keeps counting on the same database', async () => {
+  it('survives a restart: seq keeps counting and the session still works', async () => {
     const { home, cleanup } = tempHome()
     cleanups.push(cleanup)
     const first = await boot(home)
     const before = first.store.lastSeq()
+    const b1 = await first.pair()
     await first.close()
 
     const second = await boot(home)
     cleanups.push(() => second.close())
-    const sse = await openSse(second.url, before)
+    // The session is stored in the database, so the same cookie is still valid.
+    const sse = await openSse(second.url, { lastEventId: before, cookie: b1.cookie })
     cleanups.push(() => sse.close())
     await sse.waitFor((m) => m.event === 'ready')
     const types = sse.events().map((e) => e.type)
@@ -124,8 +131,8 @@ describe('event stream', () => {
 
 describe('providers (fake CLIs)', () => {
   it('detects the fake CLIs and marks grok and nous as not available', async () => {
-    const { daemon } = await setup()
-    const { providers } = await getJson<ProvidersResponse>(`${daemon.url}/api/providers`)
+    const { b } = await setup()
+    const { providers } = await b.json<ProvidersResponse>('/api/providers')
     const byId = Object.fromEntries(providers.map((p) => [p.id, p]))
     for (const id of ['claude', 'codex', 'cursor']) {
       assert.equal(byId[id]?.detected, true, id)
@@ -142,17 +149,17 @@ describe('providers (fake CLIs)', () => {
   })
 
   it('reports a failing CLI as not detected', async () => {
-    const { daemon } = await setup(fakeProviderEnv({ JUNOS_CODEX_BIN: brokenCli() }))
-    const { providers } = await getJson<ProvidersResponse>(`${daemon.url}/api/providers`)
+    const { b } = await setup(fakeProviderEnv({ JUNOS_CODEX_BIN: brokenCli() }))
+    const { providers } = await b.json<ProvidersResponse>('/api/providers')
     const codex = providers.find((p) => p.id === 'codex')
     assert.equal(codex?.detected, false)
     assert.equal(codex?.error, '1')
   })
 
   it('refresh emits an event only when something changed', async () => {
-    const { daemon } = await setup()
+    const { daemon, b } = await setup()
     const seq = daemon.store.lastSeq()
-    const res = await fetch(`${daemon.url}/api/providers/refresh`, { method: 'POST' })
+    const res = await b.post('/api/providers/refresh')
     assert.equal(res.status, 200)
     assert.equal(daemon.store.lastSeq(), seq)
   })
@@ -179,40 +186,57 @@ describe('lifecycle', () => {
     await first.close() // idempotent
   })
 
-  it('runs as a real process: serves health, blocks a duplicate, and recovers from a hard kill', async () => {
+  it('runs as a real process: pairs, blocks a duplicate, and recovers from a hard kill', async () => {
     const { home, cleanup } = tempHome()
     cleanups.push(cleanup)
     const main = fileURLToPath(new URL('../src/main.ts', import.meta.url))
     const env = { ...fakeProviderEnv(), JUNOS_HOME: home, JUNOS_PORT: '0' }
     const lock = join(home, 'junosd.lock')
+    const codeFile = join(home, 'pairing-code.txt')
 
     const start = () => {
       const child = spawn(process.execPath, [main], { env, stdio: ['ignore', 'pipe', 'inherit'] })
       cleanups.push(() => reap(child))
       return child
     }
-    const portOf = async () => {
+    const portOf = async (pid?: number) => {
       const deadline = Date.now() + 8000
       while (Date.now() < deadline) {
-        if (existsSync(lock)) {
-          const info = JSON.parse(readFileSync(lock, 'utf8')) as { port: number | null }
-          if (info.port) return info.port
+        try {
+          const info = JSON.parse(readFileSync(lock, 'utf8')) as { pid: number; port: number | null }
+          if (info.port && (pid === undefined || info.pid === pid)) return info.port
+        } catch {
+          /* not there yet */
         }
         await new Promise((r) => setTimeout(r, 50))
       }
       throw new Error('daemon did not publish its port')
     }
+    const pairWith = async (port: number) => {
+      // main.ts writes the announced code to a file because a service has no console.
+      const deadline = Date.now() + 8000
+      while (!existsSync(codeFile)) {
+        if (Date.now() > deadline) throw new Error('no pairing code file')
+        await new Promise((r) => setTimeout(r, 50))
+      }
+      const browser = new Browser(`http://127.0.0.1:${port}`)
+      assert.equal((await browser.pair(readFileSync(codeFile, 'utf8').trim())).status, 200)
+      return browser
+    }
 
     const child = start()
-    const port = await portOf()
-    const health = await getJson<HealthResponse>(`http://127.0.0.1:${port}/api/health`)
-    assert.equal(health.pid, child.pid)
+    const port = await portOf(child.pid)
+    const b1 = await pairWith(port)
+    const status = await b1.json<StatusResponse>('/api/status')
+    assert.equal(status.pid, child.pid)
+    await new Promise((r) => setTimeout(r, 100))
+    assert.equal(existsSync(codeFile), false, 'the code file is removed once the code is used')
 
     // A duplicate exits without touching the running daemon.
     const dup = spawn(process.execPath, [main], { env, stdio: 'ignore' })
     const dupCode = await new Promise((r) => dup.once('exit', r))
     assert.equal(dupCode, 0)
-    assert.equal((await getJson<HealthResponse>(`http://127.0.0.1:${port}/api/health`)).pid, child.pid)
+    assert.equal((await b1.json<StatusResponse>('/api/status')).pid, child.pid)
 
     // Hard kill leaves a stale lock; the next start takes it over and keeps the history.
     const exited = new Promise((r) => child.once('exit', r))
@@ -221,22 +245,14 @@ describe('lifecycle', () => {
     assert.ok(existsSync(lock), 'hard kill leaves the lock behind')
 
     const again = start()
-    const port2 = await (async () => {
-      const deadline = Date.now() + 8000
-      for (;;) {
-        try {
-          const p = JSON.parse(readFileSync(lock, 'utf8')) as { pid: number; port: number | null }
-          if (p.pid === again.pid && p.port) return p.port
-        } catch {
-          /* not yet */
-        }
-        if (Date.now() > deadline) throw new Error('restart did not take over')
-        await new Promise((r) => setTimeout(r, 50))
-      }
-    })()
-    const h2 = await getJson<HealthResponse>(`http://127.0.0.1:${port2}/api/health`)
+    const port2 = await portOf(again.pid)
+    // The session survived the kill (it is in SQLite), so the old browser is still paired.
+    const b2 = new Browser(`http://127.0.0.1:${port2}`)
+    b2.cookie = b1.cookie
+    b2.csrf = b1.csrf
+    const h2 = await b2.json<StatusResponse>('/api/status')
     assert.equal(h2.pid, again.pid)
-    assert.ok(h2.lastSeq > health.lastSeq, 'event history survived the kill')
+    assert.ok(h2.lastSeq > status.lastSeq, 'event history survived the kill')
 
     // Graceful stop (SIGTERM is a hard kill on Windows; the signal path is exercised elsewhere).
     if (process.platform !== 'win32') {
@@ -252,7 +268,6 @@ describe('lifecycle', () => {
     cleanups.push(cleanup)
     const holder = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' })
     cleanups.push(() => reap(holder))
-    const { writeFileSync } = await import('node:fs')
     writeFileSync(join(home, 'junosd.lock'), JSON.stringify({ pid: holder.pid, port: 1 }))
     await assert.rejects(startDaemon({ home, port: 0, env: fakeProviderEnv() }), /already running/)
   })

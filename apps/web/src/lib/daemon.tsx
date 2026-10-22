@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useAuth } from './auth'
 import { API_PREFIX, RESYNC_EVENT, type JunosEvent } from '@junos/shared'
 
 export type DaemonState = 'connecting' | 'connected' | 'reconnecting' | 'offline'
@@ -21,6 +22,7 @@ const RETRY_MS = 2_000
 
 /** Owns the single SSE connection to junosd. The connected state is driven by the stream, not by polling. */
 export function DaemonProvider({ children }: { children: ReactNode }) {
+  const { recheck } = useAuth()
   const [state, setState] = useState<DaemonState>('connecting')
   const [lastSeq, setLastSeq] = useState(0)
   const [resyncs, setResyncs] = useState(0)
@@ -43,6 +45,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       clearTimeout(watchdog)
       if (disposed) return
       errors += 1
+      void recheck() // a revoked session also ends the stream; if so the pairing screen takes over
       setState(errors >= OFFLINE_AFTER_ERRORS ? 'offline' : 'reconnecting')
       retry = setTimeout(connect, RETRY_MS)
     }
@@ -82,7 +85,7 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
       clearTimeout(retry)
       clearTimeout(watchdog)
     }
-  }, [])
+  }, [recheck])
 
   const value = useMemo(() => ({ state, lastSeq, resyncs }), [state, lastSeq, resyncs])
   return <DaemonContext.Provider value={value}>{children}</DaemonContext.Provider>
@@ -102,10 +105,14 @@ const LABEL: Record<DaemonState, string> = {
 
 export function DaemonStatus() {
   const { state } = useDaemon()
+  const { unpair } = useAuth()
   return (
     <div className="daemon-status" data-state={state} role="status">
       <span className="dot" aria-hidden="true" />
       <span>{LABEL[state]}</span>
+      <button type="button" className="link" onClick={() => void unpair()}>
+        Unpair
+      </button>
     </div>
   )
 }
