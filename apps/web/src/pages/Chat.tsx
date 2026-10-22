@@ -40,6 +40,8 @@ export default function Chat() {
   const [sending, setSending] = useState(false)
   const [reload, setReload] = useState(0)
   const source = useRef<EventSource | null>(null)
+  // Set when a stream ends: the live text stays on screen until the saved reply has been reloaded.
+  const clearLiveAfterLoad = useRef(false)
   const refresh = useCallback(() => setReload((n) => n + 1), [])
 
   // Provider status and the model list.
@@ -78,17 +80,26 @@ export default function Chat() {
   useEffect(() => {
     if (!activeId) return
     let cancelled = false
+    // Whatever happens to the fetch, the live bubble must not be left on screen for good.
+    const releaseLive = () => {
+      if (clearLiveAfterLoad.current) {
+        clearLiveAfterLoad.current = false
+        setLive(null)
+      }
+    }
     void (async () => {
       try {
         const res = await api(`/conversations/${activeId}`)
-        if (!res.ok || cancelled) return
+        if (!res.ok) return releaseLive()
+        if (cancelled) return
         const d = (await res.json()) as ConversationDetail
         if (cancelled) return
         setDetail(d)
+        releaseLive()
         setModel(d.conversation.model)
         setEffort(d.conversation.effort)
       } catch {
-        /* see above */
+        releaseLive()
       }
     })()
     return () => {
@@ -101,6 +112,20 @@ export default function Chat() {
     source.current = null
   }, [])
   useEffect(() => closeStream, [closeStream])
+
+  /** Opening another chat (or a new one) must not inherit the previous chat's stream or busy state. */
+  function leaveConversation() {
+    closeStream()
+    clearLiveAfterLoad.current = false
+    setLive(null)
+    setDetail(null)
+    setNotice(null)
+    setDisclosure(null)
+  }
+  function openConversation(id: string) {
+    leaveConversation()
+    setActiveId(id)
+  }
 
   /** Follow a run's output as it is written. When it ends (or the stream is gone) reload from the saved history. */
   const attach = useCallback(
@@ -117,7 +142,7 @@ export default function Chat() {
       const finish = () => {
         es.close()
         if (source.current === es) source.current = null
-        setLive(null)
+        clearLiveAfterLoad.current = true
         refresh()
       }
       es.addEventListener('end', finish)
@@ -140,13 +165,11 @@ export default function Chat() {
   const efforts = claude?.models.find((m) => m.id === model)?.efforts ?? []
   const busy = sending || Boolean(streamingId) || live !== null
 
-  async function newChat() {
-    const res = await api('/conversations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, effort }) })
-    if (!res.ok) return setNotice('Could not start a new chat.')
-    const conv = (await res.json()) as ConversationRecord
-    setActiveId(conv.id)
-    setDetail({ conversation: conv, messages: [] })
-    refresh()
+  /** A new chat is only created on the server with its first message, so the pickers decide what it uses. */
+  function newChat() {
+    leaveConversation()
+    setActiveId(null)
+    setDraft('')
   }
 
   async function send() {
@@ -215,13 +238,13 @@ export default function Chat() {
   return (
     <section className="chat chat-layout">
       <aside className="conv-list" aria-label="Conversations">
-        <button type="button" className="primary" onClick={() => void newChat()}>
+        <button type="button" className="primary" onClick={newChat}>
           New chat
         </button>
         <ul>
           {convs.map((c) => (
             <li key={c.id}>
-              <button type="button" className="conv" aria-pressed={c.id === activeId} onClick={() => setActiveId(c.id)}>
+              <button type="button" className="conv" aria-pressed={c.id === activeId} onClick={() => openConversation(c.id)}>
                 {c.title}
               </button>
             </li>

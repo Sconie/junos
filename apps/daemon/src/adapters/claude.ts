@@ -196,7 +196,7 @@ export class ClaudeAdapter implements ProviderAdapter {
       },
       onEnd: (run) => {
         emit(parser.flush())
-        if (!parser.finished && run.status !== 'stopped') {
+        if (!parser.finished && run.status !== 'stopped' && run.status !== 'stop_unconfirmed') {
           // The process ended without a result line: say why, using stderr when there is any.
           const message = stderrTail.trim() || `Claude exited without an answer (code ${run.exitCode ?? 'unknown'}).`
           req.onEvent({ type: 'error', message, kind: classifyError(message) })

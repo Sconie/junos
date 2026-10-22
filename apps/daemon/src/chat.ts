@@ -220,16 +220,18 @@ export class ChatService {
     if (!this.acknowledged().includes(conv.provider)) {
       return { status: 'disclosure_required', provider: conv.provider, text: PROVIDER_DISCLOSURE[conv.provider] ?? `This conversation is sent to ${conv.provider}.` }
     }
+    // The one await comes first. Everything from the guards to the claim below is synchronous, so two
+    // overlapping sends cannot both pass the guards before either has claimed the slot.
+    const status = await adapter.status()
+    if (!status.available) throw new ChatError(503, 'provider_unavailable', status.reason ?? `${conv.provider} is not available`)
     if (this.#runs.paused) throw new ChatError(409, 'paused', 'junosd is stopped. Resume before sending.')
     const busy = this.#store.db.prepare(`SELECT 1 FROM message WHERE conversation_id = ? AND status = 'streaming'`).get(conversationId)
     if (busy) throw new ChatError(409, 'busy', 'A reply is still being written. Wait for it or stop it first.')
     // Decided 2026-10-22: one job per subscription at a time, so chats cannot starve scheduled work (or each other).
-    if (this.#runs.list().some((r) => (r.status === 'running' || r.status === 'cancelling') && r.provider === conv.provider)) {
+    // A run whose stop was not confirmed may still be alive, so it keeps the slot until it really exits.
+    if (this.#runs.list().some((r) => r.provider === conv.provider && (r.status === 'running' || r.status === 'cancelling' || (r.status === 'stop_unconfirmed' && this.#runs.isTracked(r.id))))) {
       throw new ChatError(409, 'provider_busy', `Another ${conv.provider} job is running. Subscriptions run one job at a time.`)
     }
-    const status = await adapter.status()
-    if (!status.available) throw new ChatError(503, 'provider_unavailable', status.reason ?? `${conv.provider} is not available`)
-
     const now = this.#iso()
     const userId = randomUUID()
     const assistantId = randomUUID()
