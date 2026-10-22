@@ -169,6 +169,33 @@ describe('pairing', () => {
     await b.post('/api/session/logout')
     assert.equal((await d.browser().pair(d.code())).status, 200)
   })
+
+  it('ends that session’s event stream on logout and leaves other sessions connected', async () => {
+    const { d } = await daemon()
+    const first = await d.pair()
+    const minted = await first.post('/api/pairing/code')
+    const { code } = (await minted.json()) as { code: string }
+    const second = d.browser()
+    assert.equal((await second.pair(code)).status, 200)
+
+    const own = await openSse(d.url, { cookie: first.cookie })
+    const other = await openSse(d.url, { cookie: second.cookie })
+    cleanups.push(() => own.close(), () => other.close())
+    await own.waitFor((m) => m.event === 'ready')
+    await other.waitFor((m) => m.event === 'ready')
+
+    await first.post('/api/session/logout')
+    const ended = await Promise.race([
+      own.closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 1000)),
+    ])
+    assert.equal(ended, 'closed')
+
+    d.store.append('test.still', { n: 1 })
+    const live = await other.waitFor((m) => (m.data as { type?: string }).type === 'test.still')
+    assert.equal((live.data as { payload: { n: number } }).payload.n, 1)
+    assert.equal(own.events().some((e) => e.type === 'test.still'), false)
+  })
 })
 
 describe('localhost protection', () => {

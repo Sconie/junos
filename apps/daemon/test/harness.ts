@@ -153,6 +153,10 @@ export async function openSse(url: string, opts: { lastEventId?: number; cookie?
   let buffer = ''
   const messages: SseMessage[] = []
   const waiters: Array<() => void> = []
+  let markClosed: () => void = () => {}
+  const closed = new Promise<void>((resolve) => {
+    markClosed = resolve
+  })
 
   void (async () => {
     try {
@@ -179,6 +183,8 @@ export async function openSse(url: string, opts: { lastEventId?: number; cookie?
       }
     } catch {
       /* aborted */
+    } finally {
+      markClosed()
     }
   })()
 
@@ -203,6 +209,8 @@ export async function openSse(url: string, opts: { lastEventId?: number; cookie?
     status: res.status,
     contentType: res.headers.get('content-type'),
     messages,
+    /** Resolves when the server ends the response or the client aborts. */
+    closed,
     waitFor,
     events: () => messages.filter((m) => m.event === 'message').map((m) => m.data as JunosEvent),
     close: () => controller.abort(),

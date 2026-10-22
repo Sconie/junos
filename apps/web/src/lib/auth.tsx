@@ -97,7 +97,14 @@ export function AuthGate({ children, pairing }: { children: ReactNode; pairing: 
   )
 
   const unpair = useCallback(async () => {
-    await api('/session/logout', { method: 'POST' }).catch(() => undefined)
+    try {
+      const res = await api('/session/logout', { method: 'POST' })
+      // A failed logout leaves the cookie valid. Flipping to unpaired hides the app and
+      // the session-load effect will not look again, so the browser is stuck until refresh.
+      if (!res.ok) return
+    } catch {
+      return
+    }
     csrf.current = ''
     setState('unpaired')
   }, [api])

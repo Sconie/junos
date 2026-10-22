@@ -1,12 +1,12 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AuthGate } from './lib/auth'
+import { AuthGate, useAuth } from './lib/auth'
 import Pair from './pages/Pair'
 
 type Call = { path: string; method: string; headers: Headers; body?: string }
 
 /** A tiny stand-in for junosd's pairing endpoints. */
-function fakeDaemon(options: { paired?: boolean; code?: string } = {}) {
+function fakeDaemon(options: { paired?: boolean; code?: string; logout?: 'ok' | 'down' | 'error' } = {}) {
   const calls: Call[] = []
   let paired = options.paired ?? false
   const json = (body: unknown, status = 200) =>
@@ -24,6 +24,8 @@ function fakeDaemon(options: { paired?: boolean; code?: string } = {}) {
         return json({ paired: true, csrf: 'tok' })
       }
       if (path === '/api/session/logout') {
+        if (options.logout === 'down') throw new TypeError('Failed to fetch')
+        if (options.logout === 'error') return json({ error: 'unavailable' }, 503)
         paired = false
         return json({ paired: false })
       }
@@ -31,6 +33,15 @@ function fakeDaemon(options: { paired?: boolean; code?: string } = {}) {
     }),
   )
   return calls
+}
+
+function Unpair() {
+  const { unpair } = useAuth()
+  return (
+    <button type="button" onClick={() => void unpair()}>
+      Unpair
+    </button>
+  )
 }
 
 function renderGate() {
@@ -90,6 +101,63 @@ describe('pairing flow', () => {
     const pairCall = calls.find((c) => c.path === '/api/pair')!
     expect(pairCall.method).toBe('POST')
     expect(JSON.parse(pairCall.body!)).toEqual({ code: 'ABCD-EFGH' })
+  })
+
+  it('returns to the pairing screen after a successful unpair', async () => {
+    const calls = fakeDaemon({ paired: true })
+    render(
+      <AuthGate pairing={<Pair />}>
+        <Unpair />
+      </AuthGate>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpair' }))
+    expect(await screen.findByRole('heading', { name: 'Pair this browser' })).toBeTruthy()
+    const logout = calls.find((c) => c.path === '/api/session/logout')!
+    expect(logout.method).toBe('POST')
+    expect(logout.headers.get('x-junos-csrf')).toBe('tok')
+  })
+
+  it('keeps the session when unpair cannot reach the daemon', async () => {
+    const calls = fakeDaemon({ paired: true, logout: 'down' })
+    render(
+      <AuthGate pairing={<Pair />}>
+        <Unpair />
+        <p>the app</p>
+      </AuthGate>,
+    )
+    const button = (await screen.findByRole('button', { name: 'Unpair' })) as HTMLButtonElement
+    fireEvent.click(button)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(calls.some((c) => c.path === '/api/session/logout')).toBe(true)
+    expect(screen.getByText('the app')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Pair this browser' })).toBeNull()
+    fireEvent.click(button)
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    const logouts = calls.filter((c) => c.path === '/api/session/logout')
+    expect(logouts).toHaveLength(2)
+    expect(logouts.every((c) => c.headers.get('x-junos-csrf') === 'tok')).toBe(true)
+    expect(screen.getByText('the app')).toBeTruthy()
+  })
+
+  it('keeps the session when logout is rejected', async () => {
+    const calls = fakeDaemon({ paired: true, logout: 'error' })
+    render(
+      <AuthGate pairing={<Pair />}>
+        <Unpair />
+        <p>the app</p>
+      </AuthGate>,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Unpair' }))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    expect(calls.some((c) => c.path === '/api/session/logout')).toBe(true)
+    expect(screen.getByText('the app')).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Pair this browser' })).toBeNull()
   })
 
   it('never keeps the code or token in browser storage', async () => {

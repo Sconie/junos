@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -219,6 +219,7 @@ describe('lifecycle', () => {
         if (Date.now() > deadline) throw new Error('no pairing code file')
         await new Promise((r) => setTimeout(r, 50))
       }
+      if (process.platform !== 'win32') assert.equal(statSync(codeFile).mode & 0o777, 0o600)
       const browser = new Browser(`http://127.0.0.1:${port}`)
       assert.equal((await browser.pair(readFileSync(codeFile, 'utf8').trim())).status, 200)
       return browser

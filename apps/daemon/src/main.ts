@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DEFAULT_PORT } from '@junos/shared'
@@ -19,8 +19,10 @@ function announceCode(code: string | null, expiresAt: number | null): void {
     return
   }
   const until = new Date(expiresAt ?? 0).toLocaleTimeString()
-  writeFileSync(codeFile, `${code}
-`)
+  // The code trades for a long-lived session. `mode` applies only when the file is created;
+  // chmod covers a rewrite of a code that is still on disk (spec 12: credential files are mode 600).
+  writeFileSync(codeFile, `${code}\n`, { mode: 0o600 })
+  chmodSync(codeFile, 0o600)
   console.log(`Pairing code: ${code}  (one use, valid until ${until}; also in ${codeFile})`)
 }
 

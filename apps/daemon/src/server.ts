@@ -101,7 +101,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const db = store
     const startedAt = new Date()
     let probes: ProviderProbe[] = []
-    const streams = new Set<ServerResponse>()
+    // Response plus the session that opened it, so logout can end that browser's streams only.
+    const streams = new Map<ServerResponse, string>()
     const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })
 
     async function refreshProviders(): Promise<void> {
@@ -118,7 +119,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       probes = next
     }
 
-    function openStream(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    function openStream(req: IncomingMessage, res: ServerResponse, url: URL, sessionId: string): void {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache, no-transform',
@@ -145,7 +146,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       }
       res.on('error', stop)
       res.on('close', stop)
-      streams.add(res)
+      streams.set(res, sessionId)
       write('retry: 2000\n\n')
       const raw = req.headers['last-event-id'] ?? url.searchParams.get('lastEventId')
       const lastId = raw === undefined || raw === null || raw === '' ? 0 : Number(raw)
@@ -230,7 +231,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
         return sendJson(res, 200, body)
       }
-      if (req.method === 'GET' && url.pathname === '/api/events') return openStream(req, res, url)
+      if (req.method === 'GET' && url.pathname === '/api/events') return openStream(req, res, url, session.id)
       if (req.method === 'GET' && url.pathname === '/api/providers') {
         return sendJson(res, 200, { providers: probes } satisfies ProvidersResponse)
       }
@@ -248,6 +249,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       }
       if (req.method === 'POST' && url.pathname === '/api/session/logout') {
         db.revokeSession(session.id)
+        // Auth is checked only when the stream opens, so an open tab would keep receiving events.
+        for (const [stream, id] of [...streams]) {
+          if (id === session.id) stream.end()
+        }
         db.append('auth.revoked', { sessionId: session.id })
         // With no paired browser left, announce a fresh code so the owner is never locked out.
         if (db.activeSessionCount() === 0) pairing.issue()
@@ -275,7 +280,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       store: db,
       close() {
         closing ??= (async () => {
-          for (const res of streams) res.end()
+          for (const res of streams.keys()) res.end()
           await new Promise<void>((resolve) => {
             srv.close(() => resolve())
             srv.closeAllConnections()
