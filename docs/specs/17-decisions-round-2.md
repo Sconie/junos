@@ -17,5 +17,15 @@ Status: 2026-10-22. Jonas answered these on the decision board (interactive page
 | Q26 | CLI agent sandbox | **Container (WSL or Docker)** with only the work copy mounted. This replaces the "worktree plus scrubbed environment only" choice in spec 16 for Phase 4 hardening; until the container exists, the scratch-dir mode stays as the interim. Provider logins must be shared into the container read-only. |
 | Q27 | Nous Portal | Reached **only through Hermes**; no standalone adapter. |
 
+## Round 3 (2026-10-22, later)
+| # | Topic | Decision |
+|---|---|---|
+| Q18 | Workflow authoring | **Form + YAML first.** The format must be upgradable (version field, see Q34); drag-and-drop editor comes later. |
+| Q28 | Live test calls | **OK**: one tiny test call per provider to capture real fixtures. |
+| Q29 | Router | **Yes, a router spreads jobs**: one job at a time per subscription, new work goes to a free subscription that fits. Replaces "two runs per subscription" (Q16). |
+| Q30 | Condensing old chats | After 90 days a **short summary** of each chat is kept (Claude writes a few lines) before the full text is deleted. |
+| Q31 | Telegram approve | **One tap, second "Are you sure?" tap for risky actions** (send, delete, spend). |
+| Q32 | Hermes chat layout | **Chat + live steps side by side.** Phone layout in Q35. |
+
 ## Pending (on the board)
-Q18 workflow authoring, Q28 live test calls to providers, Q29 router, Q30 condensing old chats, Q31 Telegram approve flow, Q32 Hermes chat layout.
+Q33 router when a subscription hits its limit, Q34 workflow file versioning, Q35 live steps on phones.
