@@ -1,0 +1,24 @@
+1. **[high] The approval guarantee exceeds the defined enforcement boundary.**  
+   **Reference:** [Principle 4, line 12](E:/AI/review-loop/specs-wt/docs/specs/00-overview.md:12): “External-send, destructive and spend actions need an exact, single-use approval enforced by JunOS’s own execution gateway.”  
+   **Why it matters:** This reads as covering Hermes generally. However, §12 limits the gateway’s remote enforcement to actions Hermes asks JunOS to perform or approve; §06 preserves independent Telegram, terminal and web UI access. The overview promises stronger supervision than the integration currently establishes.  
+   **Concrete fix:** State that the guarantee covers gateway-mediated execution. Make autonomous Hermes execution a release gate requiring demonstrated interception of risky actions across its enabled channels; otherwise label the console’s control limitations explicitly. Identify the VPS as a separate trust and storage zone alongside the “Local first” principle.
+
+2. **[med] The opening promises model coverage the adapter strategy explicitly excludes.**  
+   **Reference:** [“What JunOS is,” line 6](E:/AI/review-loop/specs-wt/docs/specs/00-overview.md:6): “chat with any model he already pays for”; Principle 1 also lists Cursor, Grok/X and Nous Portal.  
+   **Why it matters:** §03 says access is limited to verified adapters: Claude and Codex are initial targets, Cursor and Nous are research candidates, and Grok/X has no supported route. The later qualification does not resolve the opening’s universal promise.  
+   **Concrete fix:** Replace “any model” with “models exposed through supported subscription adapters, starting with Claude and Codex.” Label the remaining providers as candidates or unavailable directly in Principle 1.
+
+3. **[med] The navigation describes the eventual product without defining the first-release shell.**  
+   **Reference:** [Delivery tiers, lines 17–19](E:/AI/review-loop/specs-wt/docs/specs/00-overview.md:17), and [Navigation model, line 25](E:/AI/review-loop/specs-wt/docs/specs/00-overview.md:25).  
+   **Why it matters:** Home is a primary destination, but §13 schedules the Home aggregate in Phase 4; Kanban and Hermes arrive in Phase 3. There is no rule for hiding, disabling or previewing these destinations in Phases 1–2. Exposing the entire navigation early would give unfinished features equal prominence to working ones and dilute the Inbox’s decision hierarchy.  
+   **Concrete fix:** Add a **Phase** column to the screen index and define the initial landing route. State whether future destinations are hidden or explicitly marked as previews. Include Workflows, Settings and Home in the delivery mapping rather than leaving readers to infer their availability.
+
+4. **[med] The design authority is identified, but visual acceptance remains undefined.**  
+   **Reference:** [Design status, line 22](E:/AI/review-loop/specs-wt/docs/specs/00-overview.md:22), and [Screens heading, line 27](E:/AI/review-loop/specs-wt/docs/specs/00-overview.md:27): “match the Stitch … mockups,” which are unavailable.  
+   **Why it matters:** §14 supplies glass tokens, fallback rules and basic layout, but no type scale, line heights, spacing scale or density criteria. Its token-pair contrast checks also cannot establish legibility over every composited glow and glass layer. With no available mockups or visual acceptance gate, implementations can satisfy the tokens while producing cramped approval details, weak hierarchy or distracting activity motion.  
+   **Concrete fix:** Make the screen heading refer to §14 until reference captures are committed. Add a short release requirement linking to visual checks in §14: explicit typography and spacing roles; representative dense Chat/Inbox/approval states; legible exact-action details at narrow widths and enlarged text; contrast over the brightest composited background; and reduced-motion, opaque-panel and unsupported-blur variants. Keep approval content and Stop visually dominant over atmospheric effects.
+
+5. **[low] Terminal is indexed but has no navigation entry point.**  
+   **Reference:** [Terminal screen entry, line 40](E:/AI/review-loop/specs-wt/docs/specs/00-overview.md:40), versus the navigation model at line 25.  
+   **Why it matters:** §15 defines local and VPS shells, but the overview does not say whether Terminal is a destination, drawer or Hermes subview. A local shell should remain discoverable when Hermes is unavailable.  
+   **Concrete fix:** Specify one stable entry point and its Phase 3 availability—for example, a secondary Terminal destination, with contextual links from Hermes and run logs.
