@@ -29,7 +29,14 @@ Defining the wire format first (and mocking it) lets the UI be built before Herm
 - Hermes's workspace is a dedicated volume. Project handoff = git clone into it, or an upload into it; nothing else on the host is mounted.
 - Lifecycle controls (Restart, Update image) go through the shim calling the Docker API with a restricted socket proxy; never mount `/var/run/docker.sock` into Hermes.
 - Run with a non-root user, dropped capabilities, resource limits, and a restart policy; health check feeds the status pill.
-**Still needed from Jonas:** how Hermes inside the container is driven (CLI, gateway/HTTP, or messaging platform), where its memory lives in the volume, and whether Tailscale is available.
+**Telegram (confirmed by Jonas, 2026-10-22): Hermes is already connected to Telegram.** Today that is Jonas's only way to talk to it, so JunOS must coexist with it rather than replace it:
+- Telegram stays a first-class channel: Jonas can keep messaging Hermes from his phone, and JunOS shows those exchanges too. The shim observes Hermes's conversation and activity log (not the Telegram bot token) and mirrors Telegram messages into the console and agent chat with a `via Telegram` badge.
+- Directives sent from JunOS are delivered to Hermes through its normal gateway so they behave exactly like a Telegram message (same memory, same session), and replies can optionally be echoed to Telegram. Setting per directive: `echo to Telegram` off by default.
+- Approvals can be answered from either place: the Inbox item and a Telegram prompt (inline buttons) resolve the same approval; first answer wins and the other is marked resolved. Approval decisions still pass the junosd-side check from 12.
+- The Telegram bot token stays on the VPS, in the container's secrets. JunOS never stores it. The bot should only answer Jonas's numeric Telegram user ID (allowlist); confirm this is set.
+- Phone fallback: if JunOS is unreachable, Telegram still works, and mirrored history catches up when the shim reconnects.
+- Notifications: urgent Inbox items could be pushed via the same Telegram bot (decision for Jonas, see open questions), which removes the need for a separate push service.
+**Still needed from Jonas:** how the Hermes gateway inside the container can be reached by the shim (CLI, local HTTP/API server, or only via the Telegram gateway), where its memory lives in the volume, and whether Tailscale is available.
 
 ## Screen (matches mockup)
 Header: name, status pill (pulsing when working), model, uptime, Pause/Stop/Settings.

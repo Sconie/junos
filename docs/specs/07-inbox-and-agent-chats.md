@@ -48,5 +48,5 @@ A named preset: system prompt, default model/effort, tool allowlist, memory scop
 - Agent chat with Hermes shows directives and run cards in one thread.
 
 ## Open questions
-- Notifications: desktop only, or also push/email for urgent items?
+- Notifications: desktop only, or also push/email for urgent items? Option: send urgent items through the existing Hermes Telegram bot (or a second JunOS bot), with Approve/Deny inline buttons.
 - Mail/calendar as inbox sources (Gmail, Google Calendar): v2, read-only first.
