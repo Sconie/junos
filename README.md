@@ -59,6 +59,20 @@ Every process JunOS starts is a run owned by the run manager. The **Stop** butto
 
 The Chat screen talks to your Claude plan by running the official `claude -p` CLI as a run (so Stop works on it). Codex works the same way through `codex exec --json` (read-only sandbox, ephemeral, no user config, prompt on stdin); the Provider picker chooses which one a new conversation uses, and a conversation keeps its provider. No API key is used and JunOS never reads Claude's login. Pick a model and effort per message; they are passed to the CLI (`--model`, `--effort`), remembered on the conversation, and recorded on the run. The prompt (the whole conversation as plain text) goes to the CLI on stdin, in an empty working directory, with a minimal environment. History is stored in SQLite and survives restarts; a reply streams over `GET /api/runs/:id/stream` (kept in memory, not in the event table). The first time context goes to a provider, a one-line disclosure must be accepted. One job per subscription runs at a time. Everything a model writes is shown as plain text.
 
+### Inbox and Telegram
+
+The **Inbox** is the one queue of things that need you. It is built from events, so it can never disagree with what it is about: an approval request becomes an urgent item that shows the same ApprovalCard; deciding, denying, expiring or stopping the approval settles the item; a failed run becomes a failure item that can be marked done or snoozed. The sidebar badge counts what still needs a person.
+
+A separate **JunOS Telegram bot** can push approvals to your phone. It is **off unless you configure it**, and nothing is sent to Telegram until you do. Set these before starting junosd (the token never goes in SQLite, the UI, logs or events; the OS keychain is the planned home):
+
+```sh
+JUNOS_TELEGRAM_TOKEN=<token from @BotFather>
+JUNOS_TELEGRAM_USER_ID=<your numeric Telegram user id>
+# optional: JUNOS_TELEGRAM_QUIET=23:00-07:00
+```
+
+It answers only your user id, in your own chat, on the message it sent, with that message's current one-time code; anything else is ignored and only a count is kept. Approvals always arrive; failures and other items wait until the quiet window (23:00 to 07:00 by default) ends. Messages are a short summary (what and where), never the command or its arguments. **Deny is one tap. Approving anything that sends, deletes or spends takes a second "Are you sure?" tap**; a local write takes one. A press resolves the same gateway approval the Inbox shows, so whichever answers second sees it already resolved, and the other place is updated. `JUNOS_TELEGRAM_API` can point at a local fake for testing; it only accepts `https://api.telegram.org` or a local address.
+
 ### Connections
 
 `GET /api/connections` powers the Connections screen: one card per provider with a single state (`connected`, `needs_login`, `rate_limited`, `degraded`, `unavailable`, `unknown`). It is built from offline checks only: `claude auth status`, `codex login status` and `cursor-agent status`, plus plan limits seen in earlier runs (`provider.rate_limited` events). Nothing is sent to a provider and no email, organisation or token is ever returned. A provider signed in with an API key shows as `degraded`, because JunOS does not use API keys. Grok is shown as coming, Nous Portal as reached through Hermes, and Cursor as signed in with chat to come.

@@ -216,3 +216,17 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .connection-state[data-tone="dim"] { color: var(--text-dim); }
 .connection-fix { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .connection-fix code { font-family: var(--font-mono); background: rgba(0, 0, 0, 0.3); padding: 2px 8px; border-radius: 6px; }
+
+/* inbox */
+.inbox-layout { display: grid; grid-template-columns: 160px minmax(200px, 1fr) minmax(280px, 1.3fr); gap: 20px; margin-top: 16px; align-items: start; }
+.inbox-filters { display: grid; gap: 4px; }
+.inbox-filter { display: flex; justify-content: space-between; text-align: left; background: transparent; border-color: transparent; color: var(--text-dim); }
+.inbox-filter[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.inbox-count { font-variant-numeric: tabular-nums; }
+.inbox-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.inbox-list:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 8px; }
+.inbox-tg { font-size: 13px; }
+.inbox-item { display: grid; gap: 8px; }
+.inbox-item h3 { margin: 0; }
+.nav-badge { margin-left: auto; min-width: 20px; padding: 0 6px; text-align: center; border-radius: 99px; background: var(--accent); color: var(--accent-fg); font-size: 12px; font-weight: 700; }
+@media (max-width: 900px) { .inbox-layout { grid-template-columns: minmax(0, 1fr); } .inbox-filters { grid-auto-flow: column; overflow-x: auto; } }
