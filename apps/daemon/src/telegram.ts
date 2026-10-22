@@ -76,6 +76,8 @@ export interface TelegramOptions {
   now?: () => number
   /** Test seam; defaults to the global fetch. */
   fetchFn?: typeof fetch
+  /** Test seam for the one-time button code. Defaults to 10 hex characters. */
+  nonce?: () => string
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -99,7 +101,10 @@ export class TelegramBridge {
   #sent = 0
   #rejected = 0
   #running: Promise<void> | null = null
+  /** Item ids with a send in flight. onCreated and the poll loop would otherwise both post one approval. */
+  readonly #sending = new Set<string>()
   readonly #unsubscribe: Array<() => void> = []
+  readonly #nonce: () => string
 
   constructor(options: TelegramOptions) {
     this.#cfg = options.config
@@ -108,6 +113,7 @@ export class TelegramBridge {
     this.#inbox = options.inbox
     this.#now = options.now ?? Date.now
     this.#fetch = options.fetchFn ?? fetch
+    this.#nonce = options.nonce ?? token
   }
 
   status(): TelegramStatus {
@@ -189,16 +195,21 @@ export class TelegramBridge {
     if (item.status !== 'new') return
     const quiet = isQuiet(this.#now(), this.#cfg.quietStart, this.#cfg.quietEnd)
     if (item.kind !== 'approval' && quiet) return
-    if (this.#inbox.telegram(item.id).messageId !== null) return
+    // Claimed before the await, so the creation hook and #flushUnsent cannot both pass the unsent check.
+    if (this.#sending.has(item.id) || this.#inbox.telegram(item.id).messageId !== null) return
+    this.#sending.add(item.id)
     try {
       if (item.kind === 'approval' && item.approval) {
-        const nonce = token()
+        const nonce = this.#nonce()
         const sent = await this.#call<{ message_id: number }>('sendMessage', {
           chat_id: this.#cfg.userId,
           text: approvalText(item),
           reply_markup: buttons(item.approval.id, nonce, false),
         })
         this.#inbox.setTelegram(item.id, sent.message_id, nonce)
+        // Settled while sendMessage was in flight: the mirror edit saw no message id and skipped.
+        const current = this.#inbox.get(item.id)
+        if (current && current.status !== 'new') await this.#edit(sent.message_id, resolvedText(current)).catch(() => undefined)
       } else {
         const sent = await this.#call<{ message_id: number }>('sendMessage', { chat_id: this.#cfg.userId, text: `${item.title}\n${item.body}`.slice(0, 400) })
         this.#inbox.setTelegram(item.id, sent.message_id, null)
@@ -207,6 +218,8 @@ export class TelegramBridge {
       this.#store.append('telegram.sent', { itemId: item.id, kind: item.kind }, item.id)
     } catch (err) {
       if (!this.#abort.signal.aborted) this.#store.append('telegram.error', { message: this.#scrub(err), itemId: item.id })
+    } finally {
+      this.#sending.delete(item.id)
     }
   }
 
@@ -255,7 +268,8 @@ export class TelegramBridge {
     if (!item || !stored || stored.messageId !== messageId || stored.nonce !== nonce) {
       return this.#answer(cq.id, 'This button is out of date.')
     }
-    const confirmStage = nonce.startsWith('c')
+    // First-stage codes are hex. Confirm codes start with a non-hex letter, so the two cannot collide.
+    const confirmStage = nonce.startsWith(CONFIRM_PREFIX)
     if ((verb === 'y' || verb === 'n') !== confirmStage) return this.#answer(cq.id, 'This button is out of date.')
 
     const approval = this.#gateway.get(approvalId)
@@ -269,7 +283,7 @@ export class TelegramBridge {
     if (verb === 'd' || verb === 'n') {
       if (verb === 'n') {
         // Backing out of the confirmation puts the original buttons back.
-        const fresh = token()
+        const fresh = this.#nonce()
         this.#inbox.setTelegram(item.id, messageId, fresh)
         await this.#edit(messageId, approvalText({ ...item, approval }), buttons(approvalId, fresh, false))
         return this.#answer(cq.id, 'Cancelled.')
@@ -281,7 +295,7 @@ export class TelegramBridge {
     // Approve. Anything that sends, deletes or spends needs a second tap on a fresh one-time code.
     const risky = ALWAYS_ASK_CLASSES.includes(approval.class)
     if (verb === 'a' && risky) {
-      const confirmNonce = 'c' + token()
+      const confirmNonce = CONFIRM_PREFIX + this.#nonce()
       this.#inbox.setTelegram(item.id, messageId, confirmNonce)
       await this.#edit(messageId, `Are you sure?\nApprove ${approval.tool}${approval.target ? ` → ${approval.target}` : ''}.${approval.irreversible ? '\nThis cannot be undone.' : ''}`, buttons(approvalId, confirmNonce, true))
       return this.#answer(cq.id, 'Tap again to confirm.')
@@ -292,6 +306,8 @@ export class TelegramBridge {
 }
 
 const token = () => randomBytes(5).toString('hex')
+/** Not a hex digit: a first-stage token() is 0-9a-f, so it can never be read as the confirm step. */
+const CONFIRM_PREFIX = 'x'
 
 /** A short summary: what and where, never the full command or its arguments. */
 function approvalText(item: InboxItem): string {

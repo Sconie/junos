@@ -36,6 +36,8 @@ export interface BootOptions {
   testTools?: boolean
   stopGraceMs?: number
   stopConfirmMs?: number
+  /** Test seam for the Telegram one-time button code. */
+  telegramNonce?: () => string
 }
 
 export type TestDaemon = Daemon & {
@@ -61,6 +63,7 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     testTools: options.testTools ?? false,
     stopGraceMs: options.stopGraceMs ?? 300,
     stopConfirmMs: options.stopConfirmMs ?? 1500,
+    telegramNonce: options.telegramNonce,
     onPairingCode: (c) => {
       announced = c
     },

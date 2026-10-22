@@ -111,6 +111,23 @@ describe('Inbox', () => {
     assert.equal((await inbox()).items.length, 1)
   })
 
+  it('keeps a later approval from another run instead of folding it into the first', async () => {
+    const { b, ask, inbox, decide } = await setup()
+    const runA = (await (await b.post('/api/test/runs', { kind: 'sleep' })).json()) as { run: { id: string } }
+    const runB = (await (await b.post('/api/test/runs', { kind: 'sleep' })).json()) as { run: { id: string } }
+    const first = approvalId(await ask('test.send', { to: 'a@example.com' }, { runId: runA.run.id }))
+    const second = approvalId(await ask('test.send', { to: 'a@example.com' }, { runId: runB.run.id }))
+    assert.notEqual(first, second)
+    const pending = (await inbox()).items.filter((i) => i.kind === 'approval')
+    assert.deepEqual(pending.map((i) => i.refId).sort(), [first, second].sort())
+    await decide(first, 'deny')
+    const items = (await inbox()).items.filter((i) => i.kind === 'approval')
+    assert.equal(items.find((i) => i.refId === first)?.status, 'resolved')
+    const other = items.find((i) => i.refId === second)
+    assert.equal(other?.status, 'new')
+    assert.equal(other?.approval?.status, 'pending')
+  })
+
   it('adds a failure item for a failed run and lets it be marked done and reopened', async () => {
     const { b, inbox } = await setup()
     await b.post('/api/test/runs', { kind: 'fail' })
@@ -358,6 +375,68 @@ describe('Telegram bot', () => {
     await until(() => tg!.answers.some((a) => /Already expired|out of date/.test(a.text)))
   })
 
+  it('denies and confirms even when the one-time code starts with c', async () => {
+    const { ask, tg, approvalOf } = await setup({ telegram: true, telegramNonce: () => 'c0a1b2c3d4' })
+    const denied = approvalId(await ask('test.delete', { path: '/x' }))
+    await until(() => tg!.sent.length === 1)
+    const denyMsg = tg!.lastSent()
+    assert.match(tg!.button(denyMsg.message_id, 'Deny'), /:c0a1b2c3d4$/)
+    tg!.press(OWNER, denyMsg.message_id, tg!.button(denyMsg.message_id, 'Deny'))
+    await until(async () => (await approvalOf(denied)).status === 'denied', 4000, 'the denial')
+    assert.equal(tg!.answers.at(-1)?.text, 'Denied.')
+
+    const approved = approvalId(await ask('test.send', { to: 'a@example.com' }))
+    await until(() => tg!.sent.length === 2)
+    const m = tg!.lastSent()
+    tg!.press(OWNER, m.message_id, tg!.button(m.message_id, 'Approve'))
+    await until(() => /Are you sure\?/.test(tg!.textOf(m.message_id)), 4000, 'the confirmation')
+    assert.match(tg!.button(m.message_id, 'Yes, approve'), /:xc0a1b2c3d4$/)
+    tg!.press(OWNER, m.message_id, tg!.button(m.message_id, 'Yes, approve'))
+    await until(async () => (await approvalOf(approved)).status === 'approved', 4000, 'the approval')
+  })
+
+  it('removes the buttons when the approval is settled while the message is still being sent', async () => {
+    let release!: () => void
+    const { ask, tg, decide } = await setup({ telegram: true })
+    tg!.holdSend = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    try {
+      const id = approvalId(await ask('test.send', { to: 'a@example.com' }))
+      await until(() => tg!.sendsStarted === 1, 4000, 'the in-flight send')
+      await decide(id, 'deny')
+      assert.equal(tg!.edits.length, 0, 'nothing to edit until Telegram accepts the message')
+      release()
+      await until(() => tg!.edits.some((e) => /Resolved: denied in the Inbox/.test(e.text)), 4000, 'the late mirror edit')
+      assert.equal(tg!.sent.length, 1)
+      assert.deepEqual(tg!.edits.at(-1)!.reply_markup?.inline_keyboard, [])
+    } finally {
+      release()
+      tg!.holdSend = null
+    }
+  })
+
+  it('does not post a second copy when the poll loop overlaps the first send', async () => {
+    let release!: () => void
+    const { ask, tg } = await setup({ telegram: true })
+    tg!.holdSend = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    try {
+      await ask('test.send', { to: 'a@example.com' })
+      await until(() => tg!.sendsStarted === 1, 4000, 'the first send')
+      await sleep(250)
+      assert.equal(tg!.sendsStarted, 1, 'the poll loop must not start another send')
+      release()
+      await until(() => tg!.sent.length === 1, 4000, 'the message')
+      await sleep(200)
+      assert.equal(tg!.sent.length, 1)
+    } finally {
+      release()
+      tg!.holdSend = null
+    }
+  })
+
   it('lets only one of two simultaneous confirmations approve', async () => {
     const { ask, tg, approvalOf, d } = await setup({ telegram: true })
     const id = approvalId(await ask('test.send', { to: 'a@example.com' }))
@@ -399,6 +478,22 @@ describe('Telegram quiet hours', () => {
     const { b, tg } = await setup({ telegram: true, now: () => now })
     await b.post('/api/test/runs', { kind: 'fail' })
     await until(() => tg!.sent.length === 1, 4000, 'the failure message')
+  })
+
+  it('wakes a snoozed failure on its own and sends it once quiet hours end', async () => {
+    let now = local(23, 30)
+    const { b, tg, d, inbox } = await setup({ telegram: true, now: () => now })
+    await b.post('/api/test/runs', { kind: 'fail' })
+    await until(async () => (await inbox()).items.some((i) => i.kind === 'failure'), 4000, 'the failure item')
+    const item = (await inbox()).items.find((i) => i.kind === 'failure')!
+    const snoozeUntil = new Date(now + 60_000).toISOString()
+    assert.equal((await b.post(`/api/inbox/${item.id}/action`, { action: 'snooze', until: snoozeUntil })).status, 200)
+    await sleep(250)
+    assert.equal(tg!.sent.length, 0, 'quiet hours hold the failure, and snooze keeps it from going out')
+    now = local(7, 30) + 24 * 3600_000
+    await until(() => d.store.since(0).some((e) => e.type === 'inbox.item' && e.payload.action === 'woke'), 4000, 'the wake event')
+    await until(() => tg!.sent.length === 1, 4000, 'the morning send')
+    assert.match(tg!.lastSent().text, /run failed/)
   })
 
   it('honours a custom quiet window', async () => {

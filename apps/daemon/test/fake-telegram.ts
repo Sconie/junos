@@ -29,6 +29,10 @@ export class FakeTelegram {
   /** Offsets the daemon polled with, to prove acknowledged updates are not replayed. */
   readonly offsets: number[] = []
   failSend = false
+  /** When set, sendMessage waits for it before replying, so a test can settle an approval mid-flight. */
+  holdSend: Promise<void> | null = null
+  /** sendMessage calls that have reached this server, including ones still held. */
+  sendsStarted = 0
   #updates: Array<Record<string, unknown> & { update_id: number }> = []
   #nextUpdate = 1
   #nextMessage = 100
@@ -49,27 +53,31 @@ export class FakeTelegram {
         }
         if (!m || m[1] !== this.token) return reply(401, { ok: false, description: 'Unauthorized' })
         const body = (chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}) as Record<string, any>
-        switch (m[2]) {
-          case 'getUpdates': {
-            this.offsets.push(Number(body.offset ?? 0))
-            this.#updates = this.#updates.filter((u) => u.update_id >= Number(body.offset ?? 0))
-            return reply(200, { ok: true, result: this.#updates })
+        void (async () => {
+          switch (m[2]) {
+            case 'getUpdates': {
+              this.offsets.push(Number(body.offset ?? 0))
+              this.#updates = this.#updates.filter((u) => u.update_id >= Number(body.offset ?? 0))
+              return reply(200, { ok: true, result: this.#updates })
+            }
+            case 'sendMessage': {
+              this.sendsStarted += 1
+              if (this.holdSend) await this.holdSend
+              if (this.failSend) return reply(500, { ok: false, description: `boom for token ${this.token}` })
+              const message_id = this.#nextMessage++
+              this.sent.push({ message_id, chat_id: body.chat_id, text: body.text, reply_markup: body.reply_markup })
+              return reply(200, { ok: true, result: { message_id } })
+            }
+            case 'editMessageText':
+              this.edits.push({ message_id: body.message_id, text: body.text, reply_markup: body.reply_markup })
+              return reply(200, { ok: true, result: true })
+            case 'answerCallbackQuery':
+              this.answers.push({ id: body.callback_query_id, text: body.text ?? '' })
+              return reply(200, { ok: true, result: true })
+            default:
+              return reply(404, { ok: false, description: 'unknown method' })
           }
-          case 'sendMessage': {
-            if (this.failSend) return reply(500, { ok: false, description: `boom for token ${this.token}` })
-            const message_id = this.#nextMessage++
-            this.sent.push({ message_id, chat_id: body.chat_id, text: body.text, reply_markup: body.reply_markup })
-            return reply(200, { ok: true, result: { message_id } })
-          }
-          case 'editMessageText':
-            this.edits.push({ message_id: body.message_id, text: body.text, reply_markup: body.reply_markup })
-            return reply(200, { ok: true, result: true })
-          case 'answerCallbackQuery':
-            this.answers.push({ id: body.callback_query_id, text: body.text ?? '' })
-            return reply(200, { ok: true, result: true })
-          default:
-            return reply(404, { ok: false, description: 'unknown method' })
-        }
+        })().catch(() => undefined)
       })
     })
   }

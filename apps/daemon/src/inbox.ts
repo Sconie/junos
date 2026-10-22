@@ -170,7 +170,9 @@ export class InboxService {
     const dupe = this.#store.db
       .prepare(`SELECT * FROM inbox_item WHERE kind = ? AND source = ? AND key = ? AND created_at >= ? AND status != 'resolved' ORDER BY created_at DESC LIMIT 1`)
       .get(input.kind, input.source, input.key, since) as ItemRow | undefined
-    if (dupe) {
+    // Same source and key, but a different approval is a different decision (another run). Reusing this
+    // row would leave the new approval with no Inbox item and no Telegram prompt.
+    if (dupe && (input.kind !== 'approval' || dupe.ref_id === input.refId)) {
       this.#store.db
         .prepare(`UPDATE inbox_item SET title = ?, body = ?, updated_at = ?, status = CASE WHEN status = 'done' THEN 'new' ELSE status END WHERE id = ?`)
         .run(input.title, input.body, now, dupe.id)
@@ -196,7 +198,7 @@ export class InboxService {
   }
 
   get(id: string): InboxItem | undefined {
-    this.#wakeSnoozed()
+    this.wakeSnoozed()
     return this.#item(id)
   }
 
@@ -223,12 +225,13 @@ export class InboxService {
 
   /** Items not yet sent to Telegram, oldest first. Approvals are the only urgent kind. */
   unsentToTelegram(): InboxItem[] {
+    this.wakeSnoozed()
     const rows = this.#store.db.prepare(`SELECT * FROM inbox_item WHERE tg_sent_at IS NULL AND status = 'new' ORDER BY created_at`).all() as unknown as ItemRow[]
     return rows.map((r) => this.#toItem(r))
   }
 
   list(filter: { status?: string; kind?: string } = {}): { items: InboxItem[]; counts: InboxCounts } {
-    this.#wakeSnoozed()
+    this.wakeSnoozed()
     const rows = this.#store.db.prepare('SELECT * FROM inbox_item ORDER BY CASE priority WHEN \'urgent\' THEN 0 WHEN \'normal\' THEN 1 ELSE 2 END, created_at DESC LIMIT 500').all() as unknown as ItemRow[]
     const all = rows.map((r) => this.#toItem(r))
     const items = all.filter((i) => {
@@ -273,9 +276,22 @@ export class InboxService {
     return this.#item(id)!
   }
 
-  #wakeSnoozed(): void {
+  /**
+   * Brings due snoozes back to new. Safe to call often. Writes an event when something wakes so an open
+   * Inbox and the sidebar badge refetch without waiting for an unrelated request.
+   */
+  wakeSnoozed(): void {
     const now = this.#iso()
+    const due = this.#store.db
+      .prepare(`SELECT id FROM inbox_item WHERE status = 'snoozed' AND snooze_until <= ?`)
+      .all(now) as Array<{ id: string }>
+    if (due.length === 0) return
     this.#store.db.prepare(`UPDATE inbox_item SET status = 'new', snooze_until = NULL, updated_at = ? WHERE status = 'snoozed' AND snooze_until <= ?`).run(now, now)
+    for (const { id } of due) {
+      const item = this.#item(id)
+      if (!item || item.status !== 'new') continue
+      this.#store.append('inbox.item', { itemId: item.id, kind: item.kind, priority: item.priority, action: 'woke' }, item.id)
+    }
   }
 
   #toItem(row: ItemRow): InboxItem {

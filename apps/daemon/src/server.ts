@@ -65,6 +65,8 @@ export interface DaemonOptions {
   /** Stop timing: polite-cancel grace and post-kill confirmation window. */
   stopGraceMs?: number
   stopConfirmMs?: number
+  /** Test seam for the Telegram one-time button code. */
+  telegramNonce?: () => string
 }
 
 export interface Daemon {
@@ -152,7 +154,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const inbox = new InboxService({ store: db, gateway, runs: runMgr, now: options.now })
     const telegramCfg = telegramConfigFromEnv(env)
     const telegram = telegramCfg.config
-      ? new TelegramBridge({ config: telegramCfg.config, store: db, gateway, inbox, now: options.now })
+      ? new TelegramBridge({ config: telegramCfg.config, store: db, gateway, inbox, now: options.now, nonce: options.telegramNonce })
       : null
     const adapters = [new ClaudeAdapter(env), new CodexAdapter(env)]
     const chat = new ChatService({ store: db, runs: runMgr, adapters, cwd: chatCwd, now: options.now })
@@ -162,7 +164,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (err instanceof PausedError) return sendJson(res, 409, { error: 'paused', message: err.message })
       sendJson(res, 500, { error: 'chat error' })
     }
-    const sweeper = setInterval(() => gateway.sweepExpired(), 30_000)
+    const sweeper = setInterval(() => {
+      gateway.sweepExpired()
+      inbox.wakeSnoozed()
+    }, 30_000)
     sweeper.unref()
     const streamOwner = new WeakMap<ServerResponse, string>()
     const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })
