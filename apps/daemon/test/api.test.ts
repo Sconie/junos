@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -231,6 +231,14 @@ describe('lifecycle', () => {
     assert.equal(status.pid, child.pid)
     await new Promise((r) => setTimeout(r, 100))
     assert.equal(existsSync(codeFile), false, 'the code file is removed once the code is used')
+
+    // While a code is live its file is owner-only (POSIX modes; Windows ACLs are inherited from the profile).
+    if (process.platform !== 'win32') {
+      const live = await b1.post('/api/pairing/code')
+      assert.equal(live.status, 200)
+      await new Promise((r) => setTimeout(r, 100))
+      assert.equal(statSync(codeFile).mode & 0o077, 0, 'no group or world access to the pairing code')
+    }
 
     // A duplicate exits without touching the running daemon.
     const dup = spawn(process.execPath, [main], { env, stdio: 'ignore' })

@@ -183,3 +183,4 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .stop-stopped { padding: 8px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
 .stop-effects { font-size: 13px; color: var(--text-dim); }
 .stop-effects ul { margin: 6px 0 0; padding-left: 18px; }
+.daemon-unpair-error { color: var(--warn); font-size: 12px; }

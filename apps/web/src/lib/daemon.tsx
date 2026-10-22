@@ -106,13 +106,22 @@ const LABEL: Record<DaemonState, string> = {
 export function DaemonStatus() {
   const { state } = useDaemon()
   const { unpair } = useAuth()
+  const [failed, setFailed] = useState(false)
   return (
     <div className="daemon-status" data-state={state} role="status">
       <span className="dot" aria-hidden="true" />
       <span>{LABEL[state]}</span>
-      <button type="button" className="link" onClick={() => void unpair()}>
+      <button
+        type="button"
+        className="link"
+        onClick={() => {
+          setFailed(false)
+          void unpair().then((ok) => setFailed(!ok))
+        }}
+      >
         Unpair
       </button>
+      {failed && <span role="alert" className="daemon-unpair-error">Could not unpair. Try again.</span>}
     </div>
   )
 }
