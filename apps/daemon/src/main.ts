@@ -19,8 +19,10 @@ function announceCode(code: string | null, expiresAt: number | null): void {
     return
   }
   const until = new Date(expiresAt ?? 0).toLocaleTimeString()
+  // Owner-only (a stale file from a killed daemon is replaced so it cannot keep looser permissions).
+  rmSync(codeFile, { force: true })
   writeFileSync(codeFile, `${code}
-`)
+`, { mode: 0o600 })
   console.log(`Pairing code: ${code}  (one use, valid until ${until}; also in ${codeFile})`)
 }
 

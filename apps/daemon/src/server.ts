@@ -92,7 +92,7 @@ function sseFrame(event: JunosEvent): string {
 
 export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   const { home, host = '127.0.0.1', env = process.env, heartbeatMs = 5_000 } = options
-  mkdirSync(home, { recursive: true })
+  mkdirSync(home, { recursive: true, mode: 0o700 })
   const lock = acquireLock(home)
   let store: EventStore | undefined
   let server: Server | undefined
@@ -102,6 +102,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const startedAt = new Date()
     let probes: ProviderProbe[] = []
     const streams = new Set<ServerResponse>()
+    const streamOwner = new WeakMap<ServerResponse, string>()
     const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })
 
     async function refreshProviders(): Promise<void> {
@@ -118,7 +119,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       probes = next
     }
 
-    function openStream(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    function openStream(req: IncomingMessage, res: ServerResponse, url: URL, sessionId: string): void {
+      streamOwner.set(res, sessionId)
       res.writeHead(200, {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache, no-transform',
@@ -230,7 +232,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
         return sendJson(res, 200, body)
       }
-      if (req.method === 'GET' && url.pathname === '/api/events') return openStream(req, res, url)
+      if (req.method === 'GET' && url.pathname === '/api/events') return openStream(req, res, url, session.id)
       if (req.method === 'GET' && url.pathname === '/api/providers') {
         return sendJson(res, 200, { providers: probes } satisfies ProvidersResponse)
       }
@@ -249,6 +251,8 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (req.method === 'POST' && url.pathname === '/api/session/logout') {
         db.revokeSession(session.id)
         db.append('auth.revoked', { sessionId: session.id })
+        // A revoked session must stop receiving events at once, not when its stream happens to drop.
+        for (const stream of streams) if (streamOwner.get(stream) === session.id) stream.end()
         // With no paired browser left, announce a fresh code so the owner is never locked out.
         if (db.activeSessionCount() === 0) pairing.issue()
         res.setHeader('set-cookie', clearedSessionCookie())
