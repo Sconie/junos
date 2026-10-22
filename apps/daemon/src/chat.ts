@@ -107,6 +107,13 @@ export class ChatService {
   readonly #cwd: string
   readonly #now: () => number
   readonly #streams = new Map<string, RunStream>()
+  /**
+   * Sends that passed the busy checks but have not inserted their row or run yet.
+   * `adapter.status()` yields for up to five seconds, so without these a second POST
+   * (another tab, or a double submit) observes an idle provider and starts a second job.
+   */
+  readonly #openingConversations = new Set<string>()
+  readonly #openingProviders = new Set<string>()
 
   constructor(options: ChatOptions) {
     this.#store = options.store
@@ -221,83 +228,107 @@ export class ChatService {
       return { status: 'disclosure_required', provider: conv.provider, text: PROVIDER_DISCLOSURE[conv.provider] ?? `This conversation is sent to ${conv.provider}.` }
     }
     if (this.#runs.paused) throw new ChatError(409, 'paused', 'junosd is stopped. Resume before sending.')
-    const busy = this.#store.db.prepare(`SELECT 1 FROM message WHERE conversation_id = ? AND status = 'streaming'`).get(conversationId)
-    if (busy) throw new ChatError(409, 'busy', 'A reply is still being written. Wait for it or stop it first.')
+    // Claim the conversation and the subscription synchronously, before `status()` yields.
+    // Otherwise two overlapping sends both observe an idle provider and both spawn a job.
+    if (this.#openingConversations.has(conversationId) || this.#conversationStreaming(conversationId)) {
+      throw new ChatError(409, 'busy', 'A reply is still being written. Wait for it or stop it first.')
+    }
     // Decided 2026-10-22: one job per subscription at a time, so chats cannot starve scheduled work (or each other).
-    if (this.#runs.list().some((r) => (r.status === 'running' || r.status === 'cancelling') && r.provider === conv.provider)) {
+    // `stop_unconfirmed` still occupies it: the process survived the kill and must not be joined by a second one.
+    if (this.#openingProviders.has(conv.provider) || this.#providerOccupied(conv.provider)) {
       throw new ChatError(409, 'provider_busy', `Another ${conv.provider} job is running. Subscriptions run one job at a time.`)
     }
-    const status = await adapter.status()
-    if (!status.available) throw new ChatError(503, 'provider_unavailable', status.reason ?? `${conv.provider} is not available`)
-
-    const now = this.#iso()
-    const userId = randomUUID()
-    const assistantId = randomUUID()
-    const insert = this.#store.db.prepare(
-      `INSERT INTO message (id, conversation_id, role, provider, model, effort, content_md, status, run_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    insert.run(userId, conversationId, 'user', null, null, null, content, 'complete', null, now)
-    // The assistant message exists before the run so a reload mid-stream still shows it.
-    insert.run(assistantId, conversationId, 'assistant', conv.provider, model, effort, '', 'streaming', null, new Date(this.#now() + 1).toISOString())
-    const title = detail.messages.length === 0 && conv.title === 'New chat' ? content.replace(/\s+/g, ' ').slice(0, 48) : conv.title
-    this.#store.db
-      .prepare('UPDATE conversation SET model = ?, effort = ?, title = ?, updated_at = ? WHERE id = ?')
-      .run(model, effort, title, now, conversationId)
-
-    const history = [...detail.messages, { role: 'user' as const, content: content, status: 'complete' as MessageStatus }]
-    const prompt = buildPrompt(history)
-    const stream = new RunStream()
-    let text = ''
-    let thinking = ''
-    let failure: { message: string; kind: string } | undefined
-
-    let run
+    this.#openingConversations.add(conversationId)
+    this.#openingProviders.add(conv.provider)
     try {
-      run = adapter.start(this.#runs, {
-        model,
-        effort,
-        prompt,
-        cwd: this.#cwd,
-        onEvent: (event) => {
-          if (event.type === 'token') text += event.text
-          else if (event.type === 'thinking') thinking += event.text
-          else if (event.type === 'error') failure = { message: event.message, kind: event.kind }
-          else if (event.type === 'usage' && event.inputTokens > HEAVY_CONTEXT_TOKENS) {
-            this.#store.append('provider.heavy_context', { provider: conv.provider, inputTokens: event.inputTokens, messageId: assistantId })
-          }
-          stream.push(event)
-        },
-        onEnd: (finished) => {
-          let finalStatus: MessageStatus
-          if (failure) finalStatus = 'error'
-          else if (finished.status === 'finished') finalStatus = 'complete'
-          else finalStatus = 'partial' // stopped: what was written is kept (spec 04)
-          this.#store.db
-            .prepare('UPDATE message SET content_md = ?, thinking_md = ?, status = ?, error = ? WHERE id = ?')
-            .run(text, thinking, finalStatus, failure?.message ?? null, assistantId)
-          this.#store.append('chat.message', { conversationId, messageId: assistantId, status: finalStatus, runId: finished.id, errorKind: failure?.kind ?? null }, assistantId)
-          stream.finish()
-          // Keep the buffer a little while so a slow client can still read the end.
-          setTimeout(() => this.#streams.delete(finished.id), 60_000).unref()
-        },
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'could not start'
-      this.#store.db.prepare(`UPDATE message SET status = 'error', error = ? WHERE id = ?`).run(message, assistantId)
-      throw err
-    }
-    this.#streams.set(run.id, stream)
-    this.#store.db.prepare('UPDATE message SET run_id = ? WHERE id = ?').run(run.id, assistantId)
-    this.#store.append('chat.message', { conversationId, messageId: userId, status: 'complete' }, userId)
+      const status = await adapter.status()
+      if (!status.available) throw new ChatError(503, 'provider_unavailable', status.reason ?? `${conv.provider} is not available`)
 
-    const messages = this.get(conversationId)!.messages
-    return {
-      status: 'started',
-      runId: run.id,
-      userMessage: messages.find((m) => m.id === userId)!,
-      assistantMessage: messages.find((m) => m.id === assistantId)!,
+      const now = this.#iso()
+      const userId = randomUUID()
+      const assistantId = randomUUID()
+      const insert = this.#store.db.prepare(
+        `INSERT INTO message (id, conversation_id, role, provider, model, effort, content_md, status, run_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      insert.run(userId, conversationId, 'user', null, null, null, content, 'complete', null, now)
+      // The assistant message exists before the run so a reload mid-stream still shows it.
+      insert.run(assistantId, conversationId, 'assistant', conv.provider, model, effort, '', 'streaming', null, new Date(this.#now() + 1).toISOString())
+      const title = detail.messages.length === 0 && conv.title === 'New chat' ? content.replace(/\s+/g, ' ').slice(0, 48) : conv.title
+      this.#store.db
+        .prepare('UPDATE conversation SET model = ?, effort = ?, title = ?, updated_at = ? WHERE id = ?')
+        .run(model, effort, title, now, conversationId)
+
+      const history = [...detail.messages, { role: 'user' as const, content: content, status: 'complete' as MessageStatus }]
+      const prompt = buildPrompt(history)
+      const stream = new RunStream()
+      let text = ''
+      let thinking = ''
+      let failure: { message: string; kind: string } | undefined
+
+      let run
+      try {
+        run = adapter.start(this.#runs, {
+          model,
+          effort,
+          prompt,
+          cwd: this.#cwd,
+          onEvent: (event) => {
+            if (event.type === 'token') text += event.text
+            else if (event.type === 'thinking') thinking += event.text
+            else if (event.type === 'error') failure = { message: event.message, kind: event.kind }
+            else if (event.type === 'usage' && event.inputTokens > HEAVY_CONTEXT_TOKENS) {
+              this.#store.append('provider.heavy_context', { provider: conv.provider, inputTokens: event.inputTokens, messageId: assistantId })
+            }
+            stream.push(event)
+          },
+          onEnd: (finished) => {
+            let finalStatus: MessageStatus
+            if (failure) finalStatus = 'error'
+            else if (finished.status === 'finished') finalStatus = 'complete'
+            else finalStatus = 'partial' // stopped: what was written is kept (spec 04)
+            this.#store.db
+              .prepare('UPDATE message SET content_md = ?, thinking_md = ?, status = ?, error = ? WHERE id = ?')
+              .run(text, thinking, finalStatus, failure?.message ?? null, assistantId)
+            this.#store.append('chat.message', { conversationId, messageId: assistantId, status: finalStatus, runId: finished.id, errorKind: failure?.kind ?? null }, assistantId)
+            stream.finish()
+            // Keep the buffer a little while so a slow client can still read the end.
+            setTimeout(() => this.#streams.delete(finished.id), 60_000).unref()
+          },
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'could not start'
+        this.#store.db.prepare(`UPDATE message SET status = 'error', error = ? WHERE id = ?`).run(message, assistantId)
+        throw err
+      }
+      this.#streams.set(run.id, stream)
+      this.#store.db.prepare('UPDATE message SET run_id = ? WHERE id = ?').run(run.id, assistantId)
+      this.#store.append('chat.message', { conversationId, messageId: userId, status: 'complete' }, userId)
+
+      const messages = this.get(conversationId)!.messages
+      return {
+        status: 'started',
+        runId: run.id,
+        userMessage: messages.find((m) => m.id === userId)!,
+        assistantMessage: messages.find((m) => m.id === assistantId)!,
+      }
+    } finally {
+      this.#openingConversations.delete(conversationId)
+      this.#openingProviders.delete(conv.provider)
     }
+  }
+
+  #conversationStreaming(conversationId: string): boolean {
+    return Boolean(this.#store.db.prepare(`SELECT 1 FROM message WHERE conversation_id = ? AND status = 'streaming'`).get(conversationId))
+  }
+
+  /** True while this subscription has a live process, including one whose stop could not be confirmed. */
+  #providerOccupied(provider: string): boolean {
+    return Boolean(
+      this.#store.db
+        .prepare(`SELECT 1 FROM run WHERE provider = ? AND status IN ('running','cancelling','stop_unconfirmed')`)
+        .get(provider),
+    )
   }
 }
 

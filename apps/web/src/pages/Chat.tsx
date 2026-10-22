@@ -40,6 +40,10 @@ export default function Chat() {
   const [sending, setSending] = useState(false)
   const [reload, setReload] = useState(0)
   const source = useRef<EventSource | null>(null)
+  /** Which conversation the open stream belongs to. Switching chats must drop it. */
+  const streamFor = useRef<string | null>(null)
+  /** Reply whose socket closed. History may not have caught up, but the composer should not stay stuck. */
+  const [settledId, setSettledId] = useState<string | null>(null)
   const refresh = useCallback(() => setReload((n) => n + 1), [])
 
   // Provider status and the model list.
@@ -102,22 +106,35 @@ export default function Chat() {
   }, [])
   useEffect(() => closeStream, [closeStream])
 
+  // The stream and its buffer belong to one conversation. New chat or another thread must not inherit them.
+  useEffect(() => {
+    if (!streamFor.current || streamFor.current === activeId) return
+    closeStream()
+    streamFor.current = null
+    setLive(null)
+    setSettledId(null)
+  }, [activeId, closeStream])
+
   /** Follow a run's output as it is written. When it ends (or the stream is gone) reload from the saved history. */
   const attach = useCallback(
-    (runId: string, messageId: string) => {
+    (runId: string, messageId: string, conversationId: string) => {
       closeStream()
+      streamFor.current = conversationId
+      setSettledId(null)
       setLive({ messageId, text: '', thinking: '' })
       const es = new EventSource(`/api/runs/${runId}/stream`)
       source.current = es
       es.onmessage = (msg) => {
         const event = JSON.parse(msg.data) as RunEvent
-        if (event.type === 'token') setLive((l) => (l ? { ...l, text: l.text + event.text } : l))
-        else if (event.type === 'thinking') setLive((l) => (l ? { ...l, thinking: l.thinking + event.text } : l))
+        if (event.type === 'token') setLive((l) => (l && l.messageId === messageId ? { ...l, text: l.text + event.text } : l))
+        else if (event.type === 'thinking') setLive((l) => (l && l.messageId === messageId ? { ...l, thinking: l.thinking + event.text } : l))
       }
+      // Keep `live` until history replaces it. Clearing it here shows the empty streaming row ('…').
       const finish = () => {
         es.close()
         if (source.current === es) source.current = null
-        setLive(null)
+        if (streamFor.current === conversationId) streamFor.current = null
+        setSettledId(messageId)
         refresh()
       }
       es.addEventListener('end', finish)
@@ -127,18 +144,27 @@ export default function Chat() {
   )
 
   // A reply that was still streaming when this page loaded: re-attach to it.
-  const streamingMsg = detail?.messages.find((m) => m.status === 'streaming' && m.runId)
+  // Only the open conversation counts. A stale detail from the thread we just left must not keep the composer busy.
+  const streamingMsg =
+    detail?.conversation.id === activeId ? detail.messages.find((m) => m.status === 'streaming' && m.runId) : undefined
   const streamingRun = streamingMsg?.runId ?? null
   const streamingId = streamingMsg?.id ?? null
   useEffect(() => {
-    if (streamingRun && streamingId && !source.current) attach(streamingRun, streamingId)
-  }, [streamingRun, streamingId, attach])
+    if (streamingRun && streamingId && activeId && !source.current) attach(streamingRun, streamingId, activeId)
+  }, [streamingRun, streamingId, activeId, attach])
 
   const claude = models?.providers.find((p) => p.provider === 'claude')
   const providerStatus = models?.status.find((s) => s.provider === 'claude')
   const unavailable = providerStatus && !providerStatus.available ? (providerStatus.reason ?? 'The provider is not available.') : null
   const efforts = claude?.models.find((m) => m.id === model)?.efforts ?? []
-  const busy = sending || Boolean(streamingId) || live !== null
+  // Keep showing tokens until the saved row has them. The socket closes before that GET returns.
+  const savedLive =
+    live && detail?.conversation.id === activeId ? detail.messages.find((m) => m.id === live.messageId) : undefined
+  const historyCaughtUp = Boolean(savedLive && savedLive.status !== 'streaming' && (savedLive.content || !live?.text))
+  const shownLive = historyCaughtUp ? null : live
+  // A socket that already closed is not "still writing", even if the saved row has not been refetched.
+  const streamOpen = Boolean(streamingId) && streamingId !== settledId
+  const busy = sending || streamOpen || (shownLive !== null && shownLive.messageId !== settledId)
 
   async function newChat() {
     const res = await api('/conversations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, effort }) })
@@ -177,11 +203,14 @@ export default function Chat() {
         return
       }
       setDraft('')
-      setDetail((d) => ({
-        conversation: d?.conversation ?? ({ id } as ConversationRecord),
-        messages: [...(d?.messages ?? []), body.userMessage, body.assistantMessage],
-      }))
-      attach(body.runId, body.assistantMessage.id)
+      setDetail((d) => {
+        const same = d?.conversation.id === id
+        return {
+          conversation: same && d ? d.conversation : ({ id } as ConversationRecord),
+          messages: [...(same && d ? d.messages : []), body.userMessage, body.assistantMessage],
+        }
+      })
+      attach(body.runId, body.assistantMessage.id, id)
       refresh()
     } finally {
       setSending(false)
@@ -259,7 +288,7 @@ export default function Chat() {
         <div className="messages" aria-live="polite">
           {messages.length === 0 && <p className="muted">Start a conversation.</p>}
           {messages.map((m) => (
-            <Bubble key={m.id} message={m} live={live?.messageId === m.id ? live : null} />
+            <Bubble key={m.id} message={m} live={shownLive?.messageId === m.id ? shownLive : null} />
           ))}
         </div>
 
@@ -301,7 +330,7 @@ export default function Chat() {
             aria-label="Message"
             disabled={Boolean(unavailable)}
           />
-          {streamingId ? (
+          {streamOpen ? (
             <button type="button" onClick={() => void stopReply()}>
               Stop
             </button>

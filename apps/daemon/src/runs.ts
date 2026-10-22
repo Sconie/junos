@@ -20,7 +20,10 @@ export interface RunSpec {
   /** Receives the process's stdout and stderr as they arrive. Without these, output is discarded. */
   onStdout?: (chunk: string) => void
   onStderr?: (chunk: string) => void
-  /** Called once, after the run row reached its final status. */
+  /**
+   * Called once, when the process has actually exited (or the daemon is shutting down).
+   * A stop the process survives waits for that late exit, so the caller does not treat it as over.
+   */
   onEnd?: (run: RunRecord) => void
 }
 
@@ -206,9 +209,11 @@ export class RunManager {
       .run(new Date(this.#now()).toISOString(), code, signal, id)
     if (Number(res.changes) !== 1) return
     this.#store.append('run.stopped', { runId: id, status: 'stopped', exitCode: code, signal, late: true }, id)
+    // The process is gone now. Deliver the end we held back while the stop was unconfirmed.
+    this.#notifyEnd(id)
   }
 
-  #finish(id: string, status: RunStatus, info: { exitCode?: number | null; signal?: string | null; error?: string } = {}): void {
+  #finish(id: string, status: RunStatus, info: { exitCode?: number | null; signal?: string | null; error?: string } = {}, deferEnd = false): void {
     const res = this.#store.db
       .prepare(
         `UPDATE run SET status = ?, finished_at = ?, exit_code = ?, signal = ?, error = COALESCE(?, error)
@@ -222,6 +227,13 @@ export class RunManager {
       { runId: id, status, exitCode: info.exitCode ?? null, signal: info.signal ?? null, sideEffects: sideEffects.length },
       id,
     )
+    // A surviving process is not finished: stdout may still be flowing, and ending the run here
+    // would let another job start on the same subscription. The late exit notifies instead.
+    if (deferEnd) return
+    this.#notifyEnd(id)
+  }
+
+  #notifyEnd(id: string): void {
     const done = this.#onEnd.get(id)
     this.#onEnd.delete(id)
     const rec = this.get(id)
@@ -269,7 +281,8 @@ export class RunManager {
     }
     if (this.#children.has(id) || alive(pid)) {
       // We asked twice and it is still there. Say so instead of claiming it stopped.
-      this.#finish(id, 'stop_unconfirmed', { error: 'process did not exit after a forced kill' })
+      // Hold onEnd until it actually exits so the caller keeps the subscription occupied.
+      this.#finish(id, 'stop_unconfirmed', { error: 'process did not exit after a forced kill' }, true)
     }
     return this.get(id)
   }

@@ -343,17 +343,46 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         const live = chat.stream(runStream[1]!)
         if (!live) return sendJson(res, 404, { error: 'no live stream for this run' })
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive' })
-        const after = Number(req.headers['last-event-id'] ?? url.searchParams.get('lastEventId') ?? 0) || 0
-        const stop = live.subscribe(after, (entry) => {
-          if (res.writableEnded || res.destroyed) return
-          if (entry === null) {
-            res.write('event: end\ndata: {}\n\n')
-            res.end()
-          } else {
-            res.write(`id: ${entry.id}\ndata: ${JSON.stringify(entry.event)}\n\n`)
+        // Same hazard as /api/events: a write after end() with no listener exits the process.
+        // `close` is deferred while the socket is backed up, so `writableEnded` is not enough.
+        let closed = false
+        let unsubscribe: (() => void) | undefined
+        const stop = (): void => {
+          if (closed) return
+          closed = true
+          unsubscribe?.()
+        }
+        const write = (chunk: string): void => {
+          if (closed || res.writableEnded || res.destroyed) {
+            stop()
+            return
           }
-        })
+          try {
+            res.write(chunk)
+          } catch {
+            stop()
+          }
+        }
+        res.on('error', stop)
         res.on('close', stop)
+        const after = Number(req.headers['last-event-id'] ?? url.searchParams.get('lastEventId') ?? 0) || 0
+        unsubscribe = live.subscribe(after, (entry) => {
+          if (closed) return
+          if (entry === null) {
+            write('event: end\ndata: {}\n\n')
+            stop()
+            if (!res.writableEnded && !res.destroyed) {
+              try {
+                res.end()
+              } catch {
+                /* the client already left */
+              }
+            }
+            return
+          }
+          write(`id: ${entry.id}\ndata: ${JSON.stringify(entry.event)}\n\n`)
+        })
+        if (closed) unsubscribe()
         return
       }
       if (req.method === 'GET' && url.pathname === '/api/runs') {
