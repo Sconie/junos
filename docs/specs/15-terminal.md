@@ -11,7 +11,7 @@ A built-in terminal in JunOS with tabs for two machines: a **local shell on Jona
 - **Agent-initiated commands are gated.** Anything run by a CLI model, workflow or Hermes goes through the junosd execution gateway (12): digest-bound, single-use approval for external-send, destructive and spend actions, and every command is logged to `event` with actor and result. They are shown in a separate, clearly labelled "agent" tab so they are never mixed with Jonas's input.
 - Agents cannot write to Jonas's interactive tabs.
 - Session output is stored truncated for audit; secrets patterns are redacted from stored output.
-- The VPS shell needs the shim's bridge token; tabs close when the token is revoked or Stop is pressed.
+- The VPS shell can also run Hermes's CLI directly (the terminal Jonas already uses on the VPS), so the Hermes console and the VPS tab share one path. The VPS shell needs the shim's bridge token; tabs close when the token is revoked or Stop is pressed.
 
 ## Security notes
 - The terminal endpoint accepts only the authenticated, origin-checked browser session from 12; a web page or other local process cannot attach to a PTY.
