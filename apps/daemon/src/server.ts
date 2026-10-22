@@ -77,39 +77,55 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         'cache-control': 'no-cache, no-transform',
         connection: 'keep-alive',
       })
-      res.write('retry: 2000\n\n')
+      // A write after end() emits ERR_STREAM_WRITE_AFTER_END and, with no listener, exits the process.
+      // Close is deferred while the socket is backed up, so the heartbeat can fire in that window.
+      let closed = false
+      let timer: ReturnType<typeof setInterval> | undefined
+      let unsubscribe: (() => void) | undefined
+      const stop = (): void => {
+        if (closed) return
+        closed = true
+        clearInterval(timer)
+        unsubscribe?.()
+        streams.delete(res)
+      }
+      const write = (chunk: string): void => {
+        if (closed || res.writableEnded || res.destroyed) {
+          stop()
+          return
+        }
+        res.write(chunk)
+      }
+      res.on('error', stop)
+      res.on('close', stop)
       streams.add(res)
+      write('retry: 2000\n\n')
       const raw = req.headers['last-event-id'] ?? url.searchParams.get('lastEventId')
       const lastId = raw === undefined || raw === null || raw === '' ? 0 : Number(raw)
       // Subscribe before replaying so nothing slips between the two; seq dedupes.
       let sent = 0
       const send = (event: JunosEvent) => {
-        if (event.seq <= sent) return
+        if (closed || event.seq <= sent) return
         sent = event.seq
-        res.write(sseFrame(event))
+        write(sseFrame(event))
       }
       let live: ((event: JunosEvent) => void) | undefined
-      const unsubscribe = db.subscribe((event) => live?.(event))
-      const timer = setInterval(() => res.write('event: heartbeat\ndata: {}\n\n'), heartbeatMs)
+      unsubscribe = db.subscribe((event) => live?.(event))
+      timer = setInterval(() => write('event: heartbeat\ndata: {}\n\n'), heartbeatMs)
       timer.unref()
-      res.on('close', () => {
-        unsubscribe()
-        streams.delete(res)
-        clearInterval(timer)
-      })
 
       const last = db.lastSeq()
       const first = db.firstSeq()
       if (!Number.isFinite(lastId) || lastId < 0 || lastId > last || (lastId > 0 && first > lastId + 1)) {
         // The client's position is unknown or has been trimmed: it must refetch snapshots.
-        res.write(`event: ${RESYNC_EVENT}\ndata: ${JSON.stringify({ lastSeq: last })}\n\n`)
+        write(`event: ${RESYNC_EVENT}\ndata: ${JSON.stringify({ lastSeq: last })}\n\n`)
         sent = last
       } else {
         sent = lastId
         for (const event of db.since(lastId)) send(event)
       }
       live = send
-      res.write(`event: ready\ndata: ${JSON.stringify({ lastSeq: db.lastSeq() })}\n\n`)
+      write(`event: ready\ndata: ${JSON.stringify({ lastSeq: db.lastSeq() })}\n\n`)
     }
 
     server = createServer((req, res) => {
