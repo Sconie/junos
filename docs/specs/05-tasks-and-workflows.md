@@ -9,9 +9,9 @@ Tabs: All, Running, Paused, Failed. Table columns: status, name, schedule (cron 
 
 ### Scheduler contract (rev 2)
 Schedules are materialised as **persisted run rows**, so nothing depends on in-memory timers.
-- A `scheduled_run` row is created ahead of time: `{task_id, due_at, idempotency_key = task_id + due_at, status: due | claimed | running | succeeded | failed | skipped, lease_owner, lease_expires_at, attempt}`.
-- **Atomic claim**: `UPDATE scheduled_run SET status='claimed', lease_owner=?, lease_expires_at=now+lease WHERE id=? AND status='due'`; only the process that changes one row runs it. The unique idempotency key prevents duplicate rows.
-- **Lease and heartbeat**: a running job renews its lease; an expired lease marks the run `failed (lost)` on the next start, then the retry rules apply.
+- A `scheduled_run` row is created ahead of time: `{task_id, due_at, status: due | claimed | running | succeeded | failed | skipped, lease_owner, lease_expires_at, attempt}`, unique per `(task_id, due_at)` so a slot can only exist once.
+- **Atomic claim**: `UPDATE scheduled_run SET status='claimed', lease_owner=?, lease_expires_at=now+lease WHERE id=? AND status='due'`; only the process that changes one row runs it. The `(task_id, due_at)` uniqueness prevents duplicate slots.
+- **Lease and heartbeat**: a running job renews its lease; an expired lease marks the run `failed (lost)` on the next start. **Retry reuses the same row**: `UPDATE ... SET status='due', attempt=attempt+1 WHERE id=? AND status='failed' AND attempt < max_attempts`, after the backoff delay; once attempts are exhausted the row stays `failed` and an Inbox failure is created. The idempotent-step rule below decides which steps re-run.
 - **Bounded catch-up**: on start, missed `due_at` values older than `catch_up_max_age` (default 6 h) become `skipped`; `run once` collapses all missed fires into one; `run all` is capped at `catch_up_max_runs` (default 5).
 - **Side-effect-aware retries**: only steps flagged `idempotent` retry automatically. A step that already performed an external action is never retried or re-run on restart without a new approval; the run resumes from the first non-completed step using persisted step state.
 - **Event-trigger loop guard**: workflows triggered by events carry a `depth`/origin chain; a workflow cannot be re-triggered by events it caused, with a per-workflow rate limit (default 10/hour) and a global cap; breaches create an Inbox failure and pause the workflow.

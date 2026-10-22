@@ -6,7 +6,7 @@ One triage queue for everything that needs Jonas or that finished while he was a
 ### Item kinds
 | Kind | Source | Actions |
 |---|---|---|
-| approval | Hermes or workflow step needs a yes/no | Approve, Deny, Approve and remember for this project |
+| approval | Hermes or workflow step needs a yes/no | Approve, Deny (and, for write-local items only, "Approve and remember" with a scoped rule; never offered for external-send, destructive or spend, see 12) |
 | finding | Scout | Make card, Dismiss, Snooze, Ask Claude about it |
 | result | task or workflow output | Open, Save to file, Make card |
 | failure | failed run | Retry, View logs, Mute task |

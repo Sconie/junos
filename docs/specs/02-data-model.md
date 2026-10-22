@@ -35,9 +35,9 @@ project(id, name, path, repo_url, tags_json, last_activity_at)
 file_index(id, path, project_id, mime, size, mtime, ai_tags_json, summary, embedding_ref)
 memory_item(id, owner, key, value_md, pinned, updated_at)   -- Hermes memory, editable
 
-scheduled_run(id, task_id, due_at, idempotency_key UNIQUE, status, lease_owner, lease_expires_at, attempt, run_id)
+scheduled_run(id, task_id, due_at, status, lease_owner, lease_expires_at, attempt, run_id, UNIQUE(task_id, due_at))   -- one row per schedule slot; retries reuse the row
 workflow_version(id, workflow_id, version, definition_json, created_at)
-approval(id, run_id, action_digest, action_json, class, project_id, status, requested_at, expires_at,
+approval(id, run_id, action_digest, action_json, class, project_id, status (pending|approved|consumed|denied|expired), requested_at, expires_at,
          decided_by, decided_channel, decided_at)          -- status changes are compare-and-set; single use
 approval_rule(id, project_id, tool, arg_pattern, class, expires_at, max_uses, uses, created_at)
 provider_allow(id, scope, scope_ref, providers_json)        -- allowed providers per conversation/workflow

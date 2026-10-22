@@ -34,7 +34,7 @@ The model list from `models()` declares which efforts each model supports, so th
 
 ## Routing rules
 - Default chat model.
-- Fallback order (drag to reorder) is limited to the **allowed providers** for that conversation/workflow (12). Falling back to a provider outside it needs a click-to-confirm, and fallback inside it is shown in the message header. Fallback happens only before a run starts or when a run failed before any tool side effect; never re-run a request that already performed an action.
+- Fallback order (drag to reorder) is limited to the **allowed providers** for that conversation/workflow (12). Automatic fallback never leaves that list. If no allowed provider is available the run fails with a message and a "Send once to <other provider>" button, which re-submits that single request after an explicit confirmation and does not change the list. Fallback inside the list is shown in the message header. Fallback happens only before a run starts or when a run failed before any tool side effect; never re-run a request that already performed an action.
 - Per-task and per-workflow overrides.
 - "Cost guard": subscriptions have usage caps, so workflows can set `maxRunsPerDay` and `preferCheapModel`.
 
