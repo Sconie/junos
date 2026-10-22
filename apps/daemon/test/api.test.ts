@@ -146,7 +146,7 @@ describe('providers (fake CLIs)', () => {
     const { providers } = await getJson<ProvidersResponse>(`${daemon.url}/api/providers`)
     const codex = providers.find((p) => p.id === 'codex')
     assert.equal(codex?.detected, false)
-    assert.ok(codex?.error)
+    assert.equal(codex?.error, '1')
   })
 
   it('refresh emits an event only when something changed', async () => {

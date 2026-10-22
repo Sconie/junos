@@ -44,7 +44,10 @@ export async function probeProviders(env: NodeJS.ProcessEnv = process.env): Prom
         const out = await run(bin, ['--version'])
         return { id, detected: true, version: out.split(/\r?\n/)[0] }
       } catch (err) {
-        return { id, detected: false, error: (err as NodeJS.ErrnoException).code ?? 'probe failed' }
+        // Spawn failures use a string code (ENOENT). A CLI that runs and exits non-zero
+        // sets code to the numeric status, which the probe contract still stores as a string.
+        const code = (err as NodeJS.ErrnoException).code
+        return { id, detected: false, error: code == null ? 'probe failed' : String(code) }
       }
     }),
   )

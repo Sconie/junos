@@ -56,7 +56,16 @@ export function DaemonProvider({ children }: { children: ReactNode }) {
         armWatchdog()
       })
       source.addEventListener('heartbeat', armWatchdog)
-      source.addEventListener(RESYNC_EVENT, () => setResyncs((n) => n + 1))
+      source.addEventListener(RESYNC_EVENT, (msg) => {
+        // Replay was skipped (cursor ahead of a wiped stream, or a trimmed gap). Resume from
+        // the server seq, which can be behind the id this tab has been advertising.
+        const body = JSON.parse(msg.data) as { lastSeq: number }
+        if (Number.isFinite(body.lastSeq) && body.lastSeq >= 0) {
+          last = body.lastSeq
+          setLastSeq(last)
+        }
+        setResyncs((n) => n + 1)
+      })
       source.onmessage = (msg) => {
         const event = JSON.parse(msg.data) as JunosEvent
         // Events are at-least-once: only ever move forward.
