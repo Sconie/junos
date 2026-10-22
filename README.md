@@ -45,6 +45,12 @@ Only a paired browser can use the API. On start junosd prints a one-time pairing
 - When the dev UI runs on a port other than 5173, start junosd with `JUNOS_UI_ORIGINS=http://127.0.0.1:<port>`.
 - "Unpair" in the sidebar revokes the session. If it was the last one, a fresh code is announced.
 
+### Execution gateway and approvals
+
+Every side effect goes through the gateway (`POST /api/actions`). The daemon classifies the tool (read, write-local, external-send, destructive, spend; an unregistered tool is destructive and is refused), and external-send, destructive and spend actions always need an approval, whatever the autonomy level. An approval is bound to a digest of the exact action (actor, tool, sorted arguments, target, class, cwd, project) and the run. It is single use, expires after 30 minutes, and is decided in the Approvals screen. A changed argument, another run, a replay or an expired approval is rejected and audited (`gateway.*` and `approval.*` events carry the digest and result, never the arguments).
+
+To try it by hand, start junosd with `JUNOS_TEST_TOOLS=1`: the Approvals screen then shows a test panel with fake send, delete and spend tools that only record into memory.
+
 ## Running junosd as a service (Windows)
 
 `scripts/install-service.ps1` registers a per-user scheduled task that starts junosd at logon; `scripts/uninstall-service.ps1` removes it. Stop junosd with Ctrl+C, SIGTERM, or by ending the task. A hard kill leaves a stale `junosd.lock`, which the next start takes over; SQLite runs in WAL mode so the event history survives.

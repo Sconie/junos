@@ -7,6 +7,9 @@ import {
   RESYNC_EVENT,
   type HealthResponse,
   type JunosEvent,
+  APPROVAL_STATUSES,
+  type ActionRequest,
+  type ApprovalStatus,
   type ProviderProbe,
   type ProvidersResponse,
   type SessionResponse,
@@ -21,6 +24,7 @@ import {
   sessionCookie,
   sessionFromRequest,
 } from './auth.ts'
+import { Gateway, testTools, type Autonomy } from './gateway.ts'
 import { acquireLock } from './lock.ts'
 import { probeProviders } from './providers.ts'
 import { EventStore } from './store.ts'
@@ -41,6 +45,10 @@ export interface DaemonOptions {
   /** Test hooks. */
   now?: () => number
   pairingTtlMs?: number
+  approvalTtlMs?: number
+  autonomy?: Autonomy
+  /** Registers the fake test.* tools (never in a normal run). Also JUNOS_TEST_TOOLS=1. */
+  testTools?: boolean
 }
 
 export interface Daemon {
@@ -48,6 +56,8 @@ export interface Daemon {
   readonly store: EventStore
   close(): Promise<void>
 }
+
+const APPROVAL_PATH = new RegExp('^/api/approvals/([0-9a-f-]{36})(?:/(approve|deny))?$')
 
 const DEFAULT_UI_ORIGINS = ['http://127.0.0.1:5173', 'http://localhost:5173']
 
@@ -61,7 +71,7 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 }
 
 /** Reads a small JSON body; anything over 4 KB is refused. */
-function readJson(req: IncomingMessage): Promise<unknown> {
+function readJson(req: IncomingMessage, maxBytes = 4096): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let size = 0
     const chunks: Buffer[] = []
@@ -69,7 +79,7 @@ function readJson(req: IncomingMessage): Promise<unknown> {
     req.on('data', (chunk: Buffer) => {
       size += chunk.length
       if (tooLarge) return // keep draining so the client gets the 400 instead of a reset
-      if (size > 4096) {
+      if (size > maxBytes) {
         tooLarge = true
         chunks.length = 0
         reject(new Error('too large'))
@@ -102,6 +112,18 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const startedAt = new Date()
     let probes: ProviderProbe[] = []
     const streams = new Set<ServerResponse>()
+    const testToolsOn = options.testTools ?? env.JUNOS_TEST_TOOLS === '1'
+    const testEffects: Array<Record<string, unknown>> = []
+    const gateway = new Gateway({
+      store: db,
+      tools: testToolsOn ? testTools(testEffects) : [],
+      now: options.now,
+      approvalTtlMs: options.approvalTtlMs,
+      autonomy: options.autonomy,
+      testTools: testToolsOn,
+    })
+    const sweeper = setInterval(() => gateway.sweepExpired(), 30_000)
+    sweeper.unref()
     const streamOwner = new WeakMap<ServerResponse, string>()
     const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })
 
@@ -243,6 +265,52 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         )
         return
       }
+      if (req.method === 'GET' && url.pathname === '/api/gateway/info') return sendJson(res, 200, gateway.info())
+      if (req.method === 'GET' && url.pathname === '/api/gateway/test-effects' && testToolsOn) {
+        return sendJson(res, 200, { effects: testEffects })
+      }
+      if (req.method === 'GET' && url.pathname === '/api/approvals') {
+        const status = url.searchParams.get('status') ?? undefined
+        if (status && !APPROVAL_STATUSES.includes(status as ApprovalStatus)) return sendJson(res, 400, { error: 'bad status' })
+        return sendJson(res, 200, { approvals: gateway.list(status as ApprovalStatus | undefined) })
+      }
+      const approvalPath = APPROVAL_PATH.exec(url.pathname)
+      if (approvalPath) {
+        const [, id, verb] = approvalPath as unknown as [string, string, 'approve' | 'deny' | undefined]
+        if (req.method === 'GET' && !verb) {
+          const found = gateway.get(id)
+          return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: 'not found' })
+        }
+        if (req.method === 'POST' && verb) {
+          const out = verb === 'approve' ? gateway.approve(id, `session:${session.id}`, 'inbox') : gateway.deny(id, `session:${session.id}`, 'inbox')
+          if (out.ok) return sendJson(res, 200, out.approval)
+          return sendJson(res, out.reason === 'not_found' ? 404 : 409, { error: out.reason })
+        }
+      }
+      if (req.method === 'POST' && url.pathname === '/api/actions') {
+        readJson(req, 65_536).then(
+          async (body) => {
+            const b = body as Partial<ActionRequest> | null
+            const isStr = (v: unknown) => v === undefined || typeof v === 'string'
+            if (
+              !b || typeof b.tool !== 'string' || !isStr(b.project) || !isStr(b.cwd) || !isStr(b.runId) || !isStr(b.approvalId) ||
+              (b.args !== undefined && (typeof b.args !== 'object' || b.args === null || Array.isArray(b.args)))
+            ) {
+              return sendJson(res, 400, { error: 'bad request' })
+            }
+            try {
+              const out = await gateway.request('ui', { ...b, tool: b.tool, args: b.args ?? {} })
+              const code = { executed: 200, approval_required: 202, denied: 403, rejected: 409 }[out.status]
+              sendJson(res, code, out)
+            } catch (err) {
+              if (err instanceof TypeError) return sendJson(res, 400, { error: 'bad request' })
+              sendJson(res, 500, { error: 'gateway error' })
+            }
+          },
+          () => sendJson(res, 400, { error: 'bad request' }),
+        )
+        return
+      }
       if (req.method === 'POST' && url.pathname === '/api/pairing/code') {
         // An already paired browser can mint a code to pair another one.
         const { code, expiresAt } = pairing.issue()
@@ -279,6 +347,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       store: db,
       close() {
         closing ??= (async () => {
+          clearInterval(sweeper)
           for (const res of streams) res.end()
           await new Promise<void>((resolve) => {
             srv.close(() => resolve())
