@@ -5,10 +5,12 @@ import Schedules from './pages/Schedules'
 import Hermes from './pages/Hermes'
 import Files from './pages/Files'
 import Connections from './pages/Connections'
+import Approvals from './pages/Approvals'
 import { DaemonBanner, DaemonStatus } from './lib/daemon'
 
 const nav = [
   { to: '/', label: 'Overview', icon: '◎' },
+  { to: '/approvals', label: 'Approvals', icon: '✓' },
   { to: '/chat', label: 'Chat', icon: '✦' },
   { to: '/schedules', label: 'Scheduled', icon: '◷' },
   { to: '/hermes', label: 'Hermes', icon: '⚚' },
@@ -35,6 +37,7 @@ export default function App() {
         <DaemonBanner />
         <Routes>
           <Route path="/" element={<Overview />} />
+          <Route path="/approvals" element={<Approvals />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/schedules" element={<Schedules />} />
           <Route path="/hermes/*" element={<Hermes />} />

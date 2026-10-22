@@ -31,6 +31,9 @@ export interface BootOptions {
   env?: NodeJS.ProcessEnv
   now?: () => number
   pairingTtlMs?: number
+  approvalTtlMs?: number
+  autonomy?: 'ask-first' | 'balanced' | 'autonomous'
+  testTools?: boolean
 }
 
 export type TestDaemon = Daemon & {
@@ -51,6 +54,9 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     heartbeatMs: 50,
     now: options.now,
     pairingTtlMs: options.pairingTtlMs,
+    approvalTtlMs: options.approvalTtlMs,
+    autonomy: options.autonomy,
+    testTools: options.testTools ?? false,
     onPairingCode: (c) => {
       announced = c
     },

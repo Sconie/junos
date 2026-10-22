@@ -34,6 +34,23 @@ const MIGRATIONS = [
      last_seen_at TEXT NOT NULL,
      revoked_at TEXT
    )`,
+  // Approvals (spec 02/12). Status changes are compare-and-set UPDATEs; an approved row is consumed once.
+  `CREATE TABLE approval (
+     id TEXT PRIMARY KEY,
+     run_id TEXT,
+     action_digest TEXT NOT NULL,
+     action_json TEXT NOT NULL,
+     class TEXT NOT NULL,
+     project_id TEXT,
+     status TEXT NOT NULL CHECK (status IN ('pending','approved','consumed','denied','expired')),
+     requested_at TEXT NOT NULL,
+     expires_at TEXT NOT NULL,
+     decided_by TEXT,
+     decided_channel TEXT,
+     decided_at TEXT,
+     consumed_at TEXT
+   );
+   CREATE INDEX approval_status ON approval (status, requested_at)`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */
@@ -46,6 +63,11 @@ export class EventStore {
     this.#db = new DatabaseSync(path)
     this.#db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;')
     this.#migrate()
+  }
+
+  /** The open database, for stores that sit next to the event table (approvals). */
+  get db(): DatabaseSync {
+    return this.#db
   }
 
   #migrate(): void {

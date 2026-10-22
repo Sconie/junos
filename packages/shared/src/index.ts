@@ -57,3 +57,69 @@ export interface JunosEvent {
 
 /** SSE event name used when the client's Last-Event-ID cannot be replayed. */
 export const RESYNC_EVENT = 'resync'
+
+// ---- Execution gateway (spec 12) ----
+
+export const ACTION_CLASSES = ['read', 'write-local', 'external-send', 'destructive', 'spend'] as const
+export type ActionClass = (typeof ACTION_CLASSES)[number]
+
+/** Classes that can never run without a valid, single-use approval, whatever the autonomy level. */
+export const ALWAYS_ASK_CLASSES: readonly ActionClass[] = ['external-send', 'destructive', 'spend']
+
+export const APPROVAL_STATUSES = ['pending', 'approved', 'consumed', 'denied', 'expired'] as const
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
+
+/** Body of POST /api/actions. The class is decided by the daemon from the tool, never by the caller. */
+export interface ActionRequest {
+  tool: string
+  args: Record<string, unknown>
+  project?: string
+  cwd?: string
+  runId?: string
+  /** Present when re-submitting an approved action to execute it. */
+  approvalId?: string
+}
+
+export type ActionResponse =
+  | { status: 'executed'; digest: string; class: ActionClass; result: unknown }
+  | { status: 'approval_required'; digest: string; class: ActionClass; approvalId: string; expiresAt: string }
+  | { status: 'denied'; digest: string; class: ActionClass; reason: string }
+  | { status: 'rejected'; digest: string; class: ActionClass; reason: ActionRejection }
+
+export type ActionRejection =
+  | 'unknown_approval'
+  | 'digest_mismatch'
+  | 'run_mismatch'
+  | 'not_approved'
+  | 'expired'
+  | 'execution_failed'
+
+/** What the approval UI shows. `action` is the redacted copy of what was requested. */
+export interface ApprovalRecord {
+  id: string
+  status: ApprovalStatus
+  digest: string
+  class: ActionClass
+  actor: string
+  tool: string
+  target: string
+  project: string | null
+  runId: string | null
+  /** Redacted arguments, as they will be shown to the person deciding. */
+  args: unknown
+  requestedAt: string
+  expiresAt: string
+  decidedBy: string | null
+  decidedChannel: string | null
+  decidedAt: string | null
+  /** True for classes that cannot be undone (external-send, destructive, spend). */
+  irreversible: boolean
+}
+
+export interface GatewayInfo {
+  autonomy: 'ask-first' | 'balanced' | 'autonomous'
+  approvalTtlMs: number
+  /** Test tools are registered (never in a normal run). */
+  testTools: boolean
+  tools: Array<{ name: string; class: ActionClass }>
+}
