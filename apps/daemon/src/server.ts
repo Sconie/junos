@@ -11,6 +11,9 @@ import {
   type ActionRequest,
   type ApprovalStatus,
   type ConnectionsResponse,
+  type CronPreviewResponse,
+  type TaskInput,
+  type TasksResponse,
   type InboxActionRequest,
   type InboxResponse,
   type TelegramStatus,
@@ -36,6 +39,8 @@ import { ConnectionsService } from './connections.ts'
 import { ChatError, ChatService } from './chat.ts'
 import { Gateway, testTools, type Autonomy } from './gateway.ts'
 import { InboxError, InboxService } from './inbox.ts'
+import { Scheduler, TaskError, previewCron } from './scheduler.ts'
+import { makeTaskExecutor } from './task-executor.ts'
 import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
 import { acquireLock } from './lock.ts'
 import { FAKE_RUNS, PausedError, RunManager } from './runs.ts'
@@ -66,6 +71,11 @@ export interface DaemonOptions {
   stopGraceMs?: number
   /** How often expired approvals are swept and due snoozes wake (default 30 s). */
   sweepMs?: number
+  /** Scheduler timing (tests make it fast). */
+  schedulerTickMs?: number
+  schedulerGraceMs?: number
+  schedulerBackoffMs?: number[]
+  schedulerLeaseMs?: number
   stopConfirmMs?: number
 }
 
@@ -78,6 +88,7 @@ export interface Daemon {
 const CHAT_ACK_PATH = new RegExp('^/api/chat/disclosures/([a-z]+)/ack$')
 const CONVERSATION_PATH = new RegExp('^/api/conversations/([0-9a-f-]{36})(?:/(messages))?$')
 const RUN_STREAM_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stream$')
+const TASK_PATH = new RegExp('^/api/tasks/([0-9a-f-]{36})(?:/(runs|run|pause|resume))?$')
 const INBOX_PATH = new RegExp('^/api/inbox/([0-9a-f-]{36})(?:/(action))?$')
 const RUN_STOP_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stop$')
 const APPROVAL_PATH = new RegExp('^/api/approvals/([0-9a-f-]{36})(?:/(approve|deny))?$')
@@ -159,7 +170,24 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       ? new TelegramBridge({ config: telegramCfg.config, store: db, gateway, inbox, now: options.now })
       : null
     const adapters = [new ClaudeAdapter(env), new CodexAdapter(env)]
-    const chat = new ChatService({ store: db, runs: runMgr, adapters, cwd: chatCwd, now: options.now })
+    let schedulerRef: Scheduler | undefined
+    const chat = new ChatService({ store: db, runs: runMgr, adapters, cwd: chatCwd, now: options.now, providerClaimed: (p) => schedulerRef?.providerClaimed(p) ?? false })
+    const scheduler = new Scheduler({
+      store: db,
+      runs: runMgr,
+      inbox,
+      execute: makeTaskExecutor({ adapters, runs: runMgr, chat, cwd: chatCwd }),
+      now: options.now,
+      tickMs: options.schedulerTickMs,
+      graceMs: options.schedulerGraceMs,
+      backoffMs: options.schedulerBackoffMs,
+      leaseMs: options.schedulerLeaseMs,
+    })
+    schedulerRef = scheduler
+    const taskFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof TaskError) return sendJson(res, err.status, { error: err.code, message: err.message })
+      sendJson(res, 500, { error: 'task error' })
+    }
     const connections = new ConnectionsService({ store: db, adapters, env, now: options.now })
     const chatFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof ChatError) return sendJson(res, err.status, { error: err.code, message: err.message })
@@ -311,6 +339,60 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           () => sendJson(res, 500, { error: 'probe failed' }),
         )
         return
+      }
+      if (req.method === 'GET' && url.pathname === '/api/tasks') {
+        return sendJson(res, 200, { tasks: scheduler.list(), paused: runMgr.paused } satisfies TasksResponse)
+      }
+      if (req.method === 'GET' && url.pathname === '/api/tasks/preview') {
+        const preview = previewCron(url.searchParams.get('cron') ?? '', url.searchParams.get('tz') || 'Europe/Copenhagen', new Date(options.now?.() ?? Date.now()))
+        return sendJson(res, 200, preview satisfies CronPreviewResponse)
+      }
+      if (req.method === 'POST' && url.pathname === '/api/tasks') {
+        readJson(req, 65_536).then(
+          (body) => {
+            try {
+              const input = scheduler.validate((body ?? {}) as Partial<TaskInput>, (p, m, e) => chat.checkChoice(p, m, e))
+              sendJson(res, 201, scheduler.create(input))
+            } catch (err) {
+              taskFail(res, err)
+            }
+          },
+          () => sendJson(res, 400, { error: 'bad request' }),
+        )
+        return
+      }
+      const taskPath = TASK_PATH.exec(url.pathname)
+      if (taskPath) {
+        const [, taskId, sub] = taskPath as unknown as [string, string, string | undefined]
+        try {
+          if (req.method === 'GET' && !sub) {
+            const found = scheduler.get(taskId)
+            return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: 'not found' })
+          }
+          if (req.method === 'GET' && sub === 'runs') return sendJson(res, 200, { runs: scheduler.runs(taskId) })
+          if (req.method === 'DELETE' && !sub) {
+            scheduler.delete(taskId)
+            return sendJson(res, 200, { deleted: true })
+          }
+          if (req.method === 'POST' && sub === 'run') return sendJson(res, 202, scheduler.runNow(taskId))
+          if (req.method === 'POST' && (sub === 'pause' || sub === 'resume')) return sendJson(res, 200, scheduler.setEnabled(taskId, sub === 'resume'))
+          if (req.method === 'PUT' && !sub) {
+            readJson(req, 65_536).then(
+              (body) => {
+                try {
+                  const input = scheduler.validate((body ?? {}) as Partial<TaskInput>, (p, m, e) => chat.checkChoice(p, m, e))
+                  sendJson(res, 200, scheduler.update(taskId, input))
+                } catch (err) {
+                  taskFail(res, err)
+                }
+              },
+              () => sendJson(res, 400, { error: 'bad request' }),
+            )
+            return
+          }
+        } catch (err) {
+          return taskFail(res, err)
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/telegram/status') {
         return sendJson(
@@ -554,6 +636,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     db.append('daemon.started', { version: VERSION, pid: process.pid, port })
     await refreshProviders()
     telegram?.start()
+    scheduler.start()
 
     let closing: Promise<void> | undefined
     return {
@@ -563,6 +646,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         closing ??= (async () => {
           clearInterval(sweeper)
           await telegram?.stop()
+          await scheduler.stop()
           await runMgr.closeAll()
           for (const res of streams) res.end()
           await new Promise<void>((resolve) => {

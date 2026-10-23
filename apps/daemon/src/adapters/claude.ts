@@ -211,7 +211,7 @@ export class ClaudeAdapter implements ProviderAdapter {
     let stderrTail = ''
     const emit = (events: RunEvent[]) => events.forEach(req.onEvent)
     return runs.start({
-      kind: 'chat',
+      kind: req.kind ?? 'chat',
       source: 'claude',
       provider: 'claude',
       model: req.model || 'default',

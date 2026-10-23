@@ -3,12 +3,15 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "bin": { "junosd": "./src/main.ts" },
+  "bin": {
+    "junosd": "./src/main.ts"
+  },
   "scripts": {
     "start": "node src/main.ts",
     "test": "node --test --test-concurrency=1 \"test/*.test.ts\""
   },
   "dependencies": {
-    "@junos/shared": "*"
+    "@junos/shared": "*",
+    "croner": "^10.0.1"
   }
 }

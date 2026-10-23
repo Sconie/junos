@@ -73,6 +73,21 @@ JUNOS_TELEGRAM_USER_ID=<your numeric Telegram user id>
 
 It answers only your user id, in your own chat, on the message it sent, with that message's current one-time code; anything else is ignored and only a count is kept. Approvals always arrive; failures and other items wait until the quiet window (23:00 to 07:00 by default) ends. Messages are a short summary (what and where), never the command or its arguments. **Deny is one tap. Approving anything that sends, deletes or spends takes a second "Are you sure?" tap**; a local write takes one. A press resolves the same gateway approval the Inbox shows, so whichever answers second sees it already resolved, and the other place is updated. `JUNOS_TELEGRAM_API` can point at a local fake for testing; it only accepts `https://api.telegram.org` or a local address.
 
+### Scheduled tasks
+
+A task is a prompt sent to one of your subscriptions on a five-field cron schedule in a timezone (default Europe/Copenhagen). Nothing depends on an in-memory timer: every slot is a persisted `scheduled_run` row, unique per (task, due time).
+
+- **Claimed atomically** with one compare-and-set update, so two schedulers (or a restart) can never run a slot twice. A running slot holds a lease that a heartbeat renews; a lease left by a dead daemon is marked lost on the next start and **the same row** is retried.
+- **Catch-up** for slots missed while junosd was down, per task: `skip` (default), `run once` (collapses all missed slots into the latest) or `run every missed one` (capped at 5). Anything older than 6 hours is skipped. Retries and runs started by hand are never skipped by age.
+- **Overlap**: a slot that arrives while the previous run is going is skipped (default) or waits. Backlog and retries always wait their turn.
+- **One job per subscription:** a task waits while a chat (or another task) is using the same provider, and chat is refused while a task has claimed it.
+- **Retries** (1 to 5 attempts, 1/5/15 min backoff) reuse the row; only the last failure reaches the Inbox. A sign-in problem, a missing provider notice or a Stop is not retried. A deliberate Stop is not a failure.
+- A schedule is refused if it is not five fields or fires more often than every 10 minutes (the plans have caps). New tasks never backfill the past; pausing and resuming owes nothing for the gap.
+- After **Stop**, due slots are held and not started; each task's catch-up setting decides what happens after Resume.
+- Each run keeps its output and a log, the result lands in the Inbox, and the **Scheduled** screen has tabs (All, Running, Paused, Failed), a schedule builder (hourly, daily, weekly, custom) with the daemon's next five run times, Run now, Pause, Edit and Logs.
+
+A task sends its prompt to the provider like a chat message does, so the provider notice must have been accepted once in Chat first; otherwise the run fails with a message saying so and nothing is sent.
+
 ### Connections
 
 `GET /api/connections` powers the Connections screen: one card per provider with a single state (`connected`, `needs_login`, `rate_limited`, `degraded`, `unavailable`, `unknown`). It is built from offline checks only: `claude auth status`, `codex login status` and `cursor-agent status`, plus plan limits seen in earlier runs (`provider.rate_limited` events). Nothing is sent to a provider and no email, organisation or token is ever returned. A provider signed in with an API key shows as `degraded`, because JunOS does not use API keys. Grok is shown as coming, Nous Portal as reached through Hermes, and Cursor as signed in with chat to come.

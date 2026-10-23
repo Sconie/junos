@@ -107,7 +107,7 @@ export class InboxService {
     const id = String(event.payload.approvalId ?? '')
     const approval = this.#gateway.get(id)
     if (!approval) return
-    this.#upsert({
+    this.add({
       kind: 'approval',
       priority: 'urgent',
       title: `Approval needed: ${approval.tool}`,
@@ -134,7 +134,9 @@ export class InboxService {
   #runFailed(event: JunosEvent): void {
     const runId = String(event.payload.runId ?? '')
     const run = this.#runs.get(runId)
-    this.#upsert({
+    // A task run reports through its own task events: only its last failed attempt reaches the Inbox.
+    if (run?.kind === 'task') return
+    this.add({
       kind: 'failure',
       priority: 'normal',
       title: `A ${run?.source ?? 'run'} run failed`,
@@ -147,7 +149,7 @@ export class InboxService {
 
   #stopUnconfirmed(event: JunosEvent): void {
     const runId = String(event.payload.runId ?? '')
-    this.#upsert({
+    this.add({
       kind: 'failure',
       priority: 'urgent',
       title: 'Stop not confirmed',
@@ -162,7 +164,7 @@ export class InboxService {
     return this.#store.db.prepare('SELECT * FROM inbox_item WHERE kind = ? AND ref_id = ?').get(kind, refId) as ItemRow | undefined
   }
 
-  #upsert(input: { kind: InboxKind; priority: InboxPriority; title: string; body: string; source: string; key: string; refId: string }): void {
+  add(input: { kind: InboxKind; priority: InboxPriority; title: string; body: string; source: string; key: string; refId: string }): void {
     const now = this.#iso()
     const existingByRef = this.#byRef(input.kind, input.refId)
     if (existingByRef) return // the same thing again: nothing new to say

@@ -23,6 +23,8 @@ export interface AdapterRunRequest {
   effort: Effort
   /** The whole conversation as plain text, ending with the message to answer. Goes to stdin. */
   prompt: string
+  /** What kind of run this is, for the run record. Defaults to 'chat'. */
+  kind?: string
   /** An empty directory, so the CLI finds no project files or settings to load. */
   cwd: string
   onEvent: (event: RunEvent) => void
