@@ -44,7 +44,7 @@ export function acquireLock(dir: string) {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
       const info = read(path)
-      if (info && info.pid !== process.pid && alive(info.pid)) throw new AlreadyRunningError(info)
+      if (info && alive(info.pid)) throw new AlreadyRunningError(info)
       rmSync(path, { force: true }) // stale
       if (attempt === 1) throw err
     }

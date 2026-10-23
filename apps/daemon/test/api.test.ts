@@ -169,11 +169,23 @@ describe('lifecycle', () => {
     const { home, cleanup } = tempHome()
     cleanups.push(cleanup)
     const first = await boot(home)
-    // The lock holder is this very process, so a second start in-process sees a stale-looking
-    // self-lock; the cross-process case is covered by the spawned-process test below.
+    cleanups.push(() => first.close())
     const lock = join(home, 'junosd.lock')
     assert.ok(existsSync(lock))
-    assert.equal(JSON.parse(readFileSync(lock, 'utf8')).port, first.port)
+
+    let duplicate: Awaited<ReturnType<typeof boot>> | undefined
+    try {
+      duplicate = await boot(home)
+    } catch (err) {
+      assert.match(String(err), /already running/)
+    }
+    if (duplicate) cleanups.push(() => duplicate!.close())
+
+    assert.equal(duplicate, undefined, 'a second daemon in this process is rejected')
+    assert.equal(JSON.parse(readFileSync(lock, 'utf8')).port, first.port, 'the original lock is retained')
+    const health = await getJson<HealthResponse>(`${first.url}/api/health`)
+    assert.equal(health.pid, process.pid, 'the original daemon remains healthy')
+
     await first.close()
     assert.equal(existsSync(lock), false, 'lock is removed on clean close')
     await first.close() // idempotent
