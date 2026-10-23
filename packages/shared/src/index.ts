@@ -826,3 +826,81 @@ export interface AgentExecRequest {
   runId?: string
   approvalId?: string
 }
+
+// ---- Scout (spec 08) ----
+
+export type ScoutCadence = 'daily' | 'weekly'
+export type ScoutSourceKind = 'feed' | 'self'
+export const SCOUT_DISMISS_REASONS = ['not relevant', 'already know', 'too risky', 'later'] as const
+export type ScoutDismissReason = (typeof SCOUT_DISMISS_REASONS)[number]
+
+export interface ScoutSource {
+  id: string
+  name: string
+  kind: ScoutSourceKind
+  /** The feed address. Empty for the JunOS self-report. */
+  url: string
+  cadence: ScoutCadence
+  enabled: boolean
+  lastCheckedAt: string | null
+  /** `ok`, `error` or `never` (not checked yet). */
+  health: 'ok' | 'error' | 'never'
+  lastError: string | null
+}
+
+export interface ScoutSourceInput {
+  name: string
+  url?: string
+  kind?: ScoutSourceKind
+  cadence?: ScoutCadence
+  enabled?: boolean
+}
+
+export interface ScoutSettings {
+  /** Findings at or above this relevance reach the Inbox. */
+  threshold: number
+  /** Model calls Scout may make per day on a schedule (a manual run is always allowed). */
+  dailyModelCalls: number
+  provider: 'claude' | 'codex'
+}
+
+export interface ScoutFinding {
+  id: string
+  title: string
+  sourceName: string
+  link: string
+  summary: string
+  relevance: number
+  effort: 'S' | 'M' | 'L'
+  risk: 'low' | 'medium' | 'high'
+  touches: string
+  why: string
+  suggestion: string
+  status: 'new' | 'dismissed' | 'carded'
+  dismissReason: string | null
+  cardId: string | null
+  createdAt: string
+}
+
+export interface ScoutRunRecord {
+  id: string
+  trigger: 'manual' | 'schedule'
+  status: 'running' | 'succeeded' | 'failed' | 'skipped'
+  startedAt: string
+  finishedAt: string | null
+  sources: number
+  items: number
+  kept: number
+  findings: number
+  modelCalls: number
+  error: string | null
+  log: string[]
+}
+
+export interface ScoutOverview {
+  sources: ScoutSource[]
+  settings: ScoutSettings
+  findings: ScoutFinding[]
+  runs: ScoutRunRecord[]
+  running: boolean
+}

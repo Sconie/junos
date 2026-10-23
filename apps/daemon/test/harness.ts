@@ -49,6 +49,10 @@ export interface BootOptions {
   kanbanLeaseMs?: number
   filesRescanMs?: number
   filesMaxFiles?: number
+  scoutTickMs?: number
+  scoutAllowLocal?: boolean
+  scoutSlotWaitMs?: number
+  scoutFetchTimeoutMs?: number
   terminalShell?: LocalShell
   terminalAgentShell?: AgentShell
   terminalVps?: ShellOpener
@@ -97,6 +101,10 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     kanbanLeaseMs: options.kanbanLeaseMs,
     filesRescanMs: options.filesRescanMs ?? 3_600_000,
     filesMaxFiles: options.filesMaxFiles,
+    scoutTickMs: options.scoutTickMs ?? 3_600_000,
+    scoutAllowLocal: options.scoutAllowLocal ?? true,
+    scoutSlotWaitMs: options.scoutSlotWaitMs,
+    scoutFetchTimeoutMs: options.scoutFetchTimeoutMs,
     terminalShell: options.terminalShell,
     terminalAgentShell: options.terminalAgentShell,
     terminalVps: options.terminalVps,
