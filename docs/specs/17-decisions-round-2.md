@@ -27,5 +27,9 @@ Status: 2026-10-22. Jonas answered these on the decision board (interactive page
 | Q31 | Telegram approve | **One tap, second "Are you sure?" tap for risky actions** (send, delete, spend). |
 | Q32 | Hermes chat layout | **Chat + live steps side by side.** Phone layout in Q35. |
 
+| Q33 | Router at a limit | **Move to another subscription** that fits; the run shows which one ran it. |
+| Q34 | Workflow files | **Version field plus auto-upgrade** (with a backup of the old file). |
+| Q35 | Hermes steps on phone | **A Steps tab** above the chat; side by side on wide screens. |
+
 ## Pending (on the board)
-Q33 router when a subscription hits its limit, Q34 workflow file versioning, Q35 live steps on phones.
+Q36 Hermes cards on the Kanban, Q37 Scout on new releases, Q38 Home first view, Q39 usage display.
