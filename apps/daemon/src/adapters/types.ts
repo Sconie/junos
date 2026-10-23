@@ -1,4 +1,4 @@
-import type { Effort, ProviderId, ProviderModels, RunEvent, RunRecord } from '@junos/shared'
+import type { ConnectionState, Effort, ProviderId, ProviderModels, RunEvent, RunRecord } from '@junos/shared'
 import type { RunManager } from '../runs.ts'
 
 export interface AdapterStatus {
@@ -6,6 +6,16 @@ export interface AdapterStatus {
   version?: string
   /** Why it is not available, in words the UI can show. */
   reason?: string
+}
+
+/** What an offline login check found (nothing is sent to the provider to learn it). */
+export interface AdapterConnection {
+  state: ConnectionState
+  detail: string
+  method: string | null
+  plan: string | null
+  version: string | null
+  reconnect: string
 }
 
 export interface AdapterRunRequest {
@@ -25,5 +35,7 @@ export interface ProviderAdapter {
   readonly id: ProviderId
   models(): ProviderModels
   status(): Promise<AdapterStatus>
+  /** Offline login check for the Connections screen. */
+  connection(): Promise<AdapterConnection>
   start(runs: RunManager, req: AdapterRunRequest): RunRecord
 }

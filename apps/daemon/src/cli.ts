@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { delimiter, isAbsolute, join } from 'node:path'
 
@@ -68,4 +69,39 @@ export function resolveLauncher(bin: string, env: NodeJS.ProcessEnv): Launch | n
     }
   }
   return null
+}
+
+/**
+ * `codex` is installed by npm as a .cmd shim on Windows, which cannot take arbitrary arguments safely.
+ * Run the package's own entry script with node instead.
+ */
+export function resolveCodexLauncher(env: NodeJS.ProcessEnv): Launch | null {
+  const override = env.JUNOS_CODEX_BIN
+  if (override) return resolveLauncher(override, env)
+  if (process.platform !== 'win32') return resolveLauncher('codex', env)
+  const dirs = (env.PATH ?? env.Path ?? '').split(delimiter).filter(Boolean)
+  for (const dir of dirs) {
+    if (!existsSync(join(dir, 'codex.cmd'))) continue
+    const entry = join(dir, 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+    if (existsSync(entry)) return { command: process.execPath, prefix: [entry] }
+  }
+  return resolveLauncher('codex', env)
+}
+
+export interface Captured {
+  ok: boolean
+  stdout: string
+  stderr: string
+}
+
+/** Runs a short CLI command (a version or login-status probe) and returns what it printed. Sends nothing to a provider. */
+export function capture(launch: Launch, args: string[], env: NodeJS.ProcessEnv, timeoutMs = 8000): Promise<Captured> {
+  return new Promise((resolve) => {
+    execFile(
+      launch.command,
+      [...launch.prefix, ...args],
+      { timeout: timeoutMs, windowsHide: true, env: cliEnv(env), maxBuffer: 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout), stderr: String(stderr) }),
+    )
+  })
 }

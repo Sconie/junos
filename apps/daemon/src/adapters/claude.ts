@@ -1,8 +1,8 @@
 import { execFile } from 'node:child_process'
 import { EFFORTS, type RunEvent } from '@junos/shared'
-import { cliEnv, resolveLauncher } from '../cli.ts'
+import { capture, cliEnv, resolveLauncher } from '../cli.ts'
 import type { RunManager } from '../runs.ts'
-import type { AdapterRunRequest, AdapterStatus, ProviderAdapter } from './types.ts'
+import type { AdapterConnection, AdapterRunRequest, AdapterStatus, ProviderAdapter } from './types.ts'
 
 // Short on purpose: the default Claude Code system prompt is large and this is a plain chat.
 const SYSTEM_PROMPT =
@@ -171,6 +171,37 @@ export class ClaudeAdapter implements ProviderAdapter {
           resolve(err ? { available: false, reason: 'The Claude CLI did not start.' } : { available: true, version: stdout.trim().split(/\r?\n/)[0] }),
       )
     })
+  }
+
+  /** `claude auth status` reads the local login; no model call. The email and organisation it prints are ignored. */
+  async connection(): Promise<AdapterConnection> {
+    const reconnect = 'claude auth login'
+    const launch = this.#launcher()
+    if (!launch) {
+      return { state: 'unavailable', detail: 'The Claude CLI was not found. Install Claude Code first.', method: null, plan: null, version: null, reconnect }
+    }
+    const [version, auth] = await Promise.all([capture(launch, ['--version'], this.#env), capture(launch, ['auth', 'status'], this.#env)])
+    const v = version.ok ? version.stdout.trim().split(/\r?\n/)[0] ?? null : null
+    type AuthInfo = { loggedIn?: boolean; authMethod?: string; subscriptionType?: string }
+    let info = null as AuthInfo | null
+    try {
+      info = JSON.parse(auth.stdout) as AuthInfo
+    } catch {
+      /* not JSON */
+    }
+    if (!info) return { state: 'unknown', detail: 'Could not read the Claude login status.', method: null, plan: null, version: v, reconnect }
+    if (!info.loggedIn) return { state: 'needs_login', detail: 'Not signed in. Run the command below, then check again.', method: null, plan: null, version: v, reconnect }
+    if (info.authMethod && info.authMethod !== 'claude.ai') {
+      return {
+        state: 'degraded',
+        detail: 'Signed in with an API key or another method, which JunOS does not use. Sign in with your Claude plan.',
+        method: info.authMethod,
+        plan: null,
+        version: v,
+        reconnect,
+      }
+    }
+    return { state: 'connected', detail: 'Signed in with your Claude plan.', method: 'Signed in via CLI', plan: info.subscriptionType ?? null, version: v, reconnect }
   }
 
   start(runs: RunManager, req: AdapterRunRequest) {

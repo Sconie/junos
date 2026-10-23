@@ -203,3 +203,16 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .disclosure p { margin: 0; flex: 1 1 280px; }
 .composer textarea { flex: 1; font: inherit; color: var(--text); background: var(--panel-strong); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; resize: vertical; }
 @media (max-width: 900px) { .chat-layout { grid-template-columns: minmax(0, 1fr); height: auto; } .conv-list ul { max-height: 140px; } }
+
+/* connections */
+.connections { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.connection { display: grid; gap: 8px; align-content: start; }
+.connection-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.connection-head h3 { margin: 0; }
+.connection-state { margin: 0; }
+.connection-state[data-tone="ok"] { color: var(--ok); }
+.connection-state[data-tone="warn"] { color: var(--warn); }
+.connection-state[data-tone="bad"] { color: var(--bad); }
+.connection-state[data-tone="dim"] { color: var(--text-dim); }
+.connection-fix { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.connection-fix code { font-family: var(--font-mono); background: rgba(0, 0, 0, 0.3); padding: 2px 8px; border-radius: 6px; }

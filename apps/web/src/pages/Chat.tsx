@@ -24,6 +24,10 @@ interface Live {
 
 const EFFORT_LABEL: Record<Effort, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max' }
 
+type ProviderChoice = 'claude' | 'codex'
+const PROVIDER_LABEL: Record<ProviderChoice, string> = { claude: 'Claude', codex: 'Codex (ChatGPT)' }
+const PLAN_LABEL: Record<ProviderChoice, string> = { claude: 'your Claude plan', codex: 'your ChatGPT plan' }
+
 /** Chat with the connected provider: model and effort picker, streaming reply, history that survives a reload. */
 export default function Chat() {
   const { api } = useAuth()
@@ -33,6 +37,7 @@ export default function Chat() {
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [draft, setDraft] = useState('')
+  const [provider, setProvider] = useState<ProviderChoice>('claude')
   const [model, setModel] = useState('')
   const [effort, setEffort] = useState<Effort>('medium')
   const [disclosure, setDisclosure] = useState<{ provider: string; text: string } | null>(null)
@@ -108,6 +113,7 @@ export default function Chat() {
         const d = (await res.json()) as ConversationDetail
         if (cancelled) return
         setDetail(d)
+        setProvider(d.conversation.provider as ProviderChoice)
         releaseLive()
         setModel(d.conversation.model)
         setEffort(d.conversation.effort)
@@ -176,11 +182,20 @@ export default function Chat() {
     if (streamingRun && streamingId && !source.current) attach(streamingRun, streamingId)
   }, [streamingRun, streamingId, attach])
 
-  const claude = models?.providers.find((p) => p.provider === 'claude')
-  const providerStatus = models?.status.find((s) => s.provider === 'claude')
+  const claude = models?.providers.find((p) => p.provider === provider)
+  const providerStatus = models?.status.find((s) => s.provider === provider)
   const unavailable = providerStatus && !providerStatus.available ? (providerStatus.reason ?? 'The provider is not available.') : null
   const efforts = claude?.models.find((m) => m.id === model)?.efforts ?? []
   const busy = sending || Boolean(streamingId) || live !== null
+  // A conversation belongs to one provider for its whole life (history replay to another is a later step).
+  const providerLocked = (detail?.messages.length ?? 0) > 0
+
+  function chooseProvider(next: ProviderChoice) {
+    setProvider(next)
+    const info = models?.providers.find((p) => p.provider === next)
+    setModel('')
+    if (info && !info.models[0]?.efforts.includes(effort)) setEffort('medium')
+  }
 
   /** A new chat is only created on the server with its first message, so the pickers decide what it uses. */
   function newChat() {
@@ -196,8 +211,11 @@ export default function Chat() {
     setSending(true)
     try {
       let id = activeId
+      // An empty conversation opened from the list was created with some provider; if the picker now shows
+      // another one, the message must go to a new conversation for that provider, not to the old one.
+      if (id && detail && detail.messages.length === 0 && detail.conversation.provider !== provider) id = null
       if (!id) {
-        const created = await api('/conversations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model, effort }) })
+        const created = await api('/conversations', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider, model, effort }) })
         if (!created.ok) return setNotice('Could not start a chat.')
         id = ((await created.json()) as ConversationRecord).id
         setActiveId(id)
@@ -271,7 +289,13 @@ export default function Chat() {
 
       <div className="chat-main">
         <header className="toolbar">
-          <span className="chip">Claude</span>
+          <select value={provider} onChange={(e) => chooseProvider(e.target.value as ProviderChoice)} aria-label="Provider" disabled={busy || providerLocked}>
+            {(Object.keys(PROVIDER_LABEL) as ProviderChoice[]).map((p) => (
+              <option key={p} value={p}>
+                {PROVIDER_LABEL[p]}
+              </option>
+            ))}
+          </select>
           <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model" disabled={busy}>
             {(claude?.models ?? [{ id: '', label: 'Default', efforts: [] }]).map((m) => (
               <option key={m.id} value={m.id}>
@@ -293,7 +317,9 @@ export default function Chat() {
               </button>
             ))}
           </div>
-          <span className="muted chat-route">via your Claude plan · may send to: Claude only</span>
+          <span className="muted chat-route">
+            via {PLAN_LABEL[provider]} · may send to: {PROVIDER_LABEL[provider]} only
+          </span>
         </header>
 
         <div className="messages" aria-live="polite">

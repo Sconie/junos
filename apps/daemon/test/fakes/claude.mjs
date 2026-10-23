@@ -10,6 +10,21 @@ if (args.includes('--version')) {
   process.exit(0)
 }
 
+if (args[0] === 'auth' && args[1] === 'status') {
+  // The real one prints JSON including an email and organisation; the adapter must ignore those.
+  const auth = process.env.JUNOS_FAKE_CLAUDE_AUTH || 'claude.ai'
+  if (auth === 'out') {
+    console.log(JSON.stringify({ loggedIn: false, authMethod: 'none' }))
+    process.exit(1)
+  }
+  if (auth === 'garbage') {
+    console.log('not json at all')
+    process.exit(0)
+  }
+  console.log(JSON.stringify({ loggedIn: true, authMethod: auth, apiProvider: 'firstParty', email: 'someone@example.com', orgName: "someone's Organization", subscriptionType: 'pro' }))
+  process.exit(0)
+}
+
 const mode = process.env.JUNOS_FAKE_MODE || 'ok'
 const delay = Number(process.env.JUNOS_FAKE_DELAY || 5)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

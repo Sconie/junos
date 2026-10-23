@@ -10,6 +10,7 @@ import {
   APPROVAL_STATUSES,
   type ActionRequest,
   type ApprovalStatus,
+  type ConnectionsResponse,
   type ProviderProbe,
   type SendMessageRequest,
   type RunsResponse,
@@ -27,6 +28,8 @@ import {
   sessionFromRequest,
 } from './auth.ts'
 import { ClaudeAdapter } from './adapters/claude.ts'
+import { CodexAdapter } from './adapters/codex.ts'
+import { ConnectionsService } from './connections.ts'
 import { ChatError, ChatService } from './chat.ts'
 import { Gateway, testTools, type Autonomy } from './gateway.ts'
 import { acquireLock } from './lock.ts'
@@ -140,7 +143,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const runMgr = runs
     const chatCwd = join(home, 'chat-cwd')
     mkdirSync(chatCwd, { recursive: true })
-    const chat = new ChatService({ store: db, runs: runMgr, adapters: [new ClaudeAdapter(env)], cwd: chatCwd, now: options.now })
+    const adapters = [new ClaudeAdapter(env), new CodexAdapter(env)]
+    const chat = new ChatService({ store: db, runs: runMgr, adapters, cwd: chatCwd, now: options.now })
+    const connections = new ConnectionsService({ store: db, adapters, env, now: options.now })
     const chatFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof ChatError) return sendJson(res, err.status, { error: err.code, message: err.message })
       if (err instanceof PausedError) return sendJson(res, 409, { error: 'paused', message: err.message })
@@ -286,6 +291,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         refreshProviders().then(
           () => sendJson(res, 200, { providers: probes } satisfies ProvidersResponse),
           () => sendJson(res, 500, { error: 'probe failed' }),
+        )
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/api/connections') {
+        connections.list().then(
+          (list) => sendJson(res, 200, { connections: list } satisfies ConnectionsResponse),
+          (err) => chatFail(res, err),
         )
         return
       }
