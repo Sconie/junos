@@ -622,3 +622,97 @@ export interface HermesOverview {
   /** Set after a Stop whose result could not be confirmed. */
   stopUnconfirmed: boolean
 }
+
+// ---- Kanban (spec 09) ----
+
+export const KANBAN_COLUMN_KINDS = ['ideas', 'ready', 'active', 'review', 'done', 'blocked'] as const
+export type KanbanColumnKind = (typeof KANBAN_COLUMN_KINDS)[number]
+
+export interface KanbanColumn {
+  key: string
+  name: string
+  /** Automation depends on the kind, never on the display name. */
+  kind: KanbanColumnKind
+  /** Shown in the header; not enforced for a person. */
+  wip: number | null
+}
+
+export const KANBAN_COLUMNS: KanbanColumn[] = [
+  { key: 'ideas', name: 'Ideas', kind: 'ideas', wip: null },
+  { key: 'ready', name: 'Ready', kind: 'ready', wip: null },
+  { key: 'in_progress', name: 'In progress', kind: 'active', wip: 3 },
+  { key: 'review', name: 'Review', kind: 'review', wip: null },
+  { key: 'done', name: 'Done', kind: 'done', wip: null },
+  { key: 'blocked', name: 'Blocked', kind: 'blocked', wip: null },
+]
+
+export const KANBAN_PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
+export type KanbanPriority = (typeof KANBAN_PRIORITIES)[number]
+export type KanbanAssignee = 'jonas' | 'hermes' | 'none'
+
+export interface KanbanChecklistItem {
+  text: string
+  done: boolean
+}
+
+export interface KanbanActivity {
+  id: string
+  at: string
+  /** `jonas`, `hermes` or `system`. */
+  actor: string
+  text: string
+}
+
+export interface KanbanCard {
+  id: string
+  column: string
+  position: number
+  title: string
+  body: string
+  /** `jonas`, `hermes`, `scout` or `workflow:<id>`. A Hermes-created card shows a marker. */
+  creator: string
+  assignee: KanbanAssignee
+  project: string
+  priority: KanbanPriority
+  labels: string[]
+  due: string | null
+  checklist: KanbanChecklistItem[]
+  /** What Hermes wrote when it finished. */
+  summary: string
+  /** Set while Hermes holds the card. */
+  claimedBy: string | null
+  createdAt: string
+  updatedAt: string
+  activity: KanbanActivity[]
+}
+
+export interface KanbanCardInput {
+  title: string
+  body?: string
+  column?: string
+  assignee?: KanbanAssignee
+  project?: string
+  priority?: KanbanPriority
+  labels?: string[]
+  due?: string | null
+  checklist?: KanbanChecklistItem[]
+}
+
+export interface KanbanCardPatch extends Partial<KanbanCardInput> {
+  /** Place the card just before this one in its column; omit to put it last. */
+  beforeId?: string | null
+}
+
+export interface KanbanBoard {
+  columns: KanbanColumn[]
+  cards: KanbanCard[]
+  projects: string[]
+  /** The card Hermes is working on right now. */
+  hermesWorkingOn: { id: string; title: string } | null
+}
+
+/** What Hermes may ask of the board. It can never move a card to Done. */
+export type KanbanAgentAction =
+  | { kind: 'create'; title: string; body?: string }
+  | { kind: 'move'; cardId: string; column: string }
+  | { kind: 'comment'; cardId: string; text: string }

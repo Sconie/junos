@@ -48,6 +48,7 @@ import { makeTaskExecutor } from './task-executor.ts'
 import { WorkflowError, WorkflowService } from './workflows.ts'
 import { workflowTools } from './workflow-tools.ts'
 import { HermesError, HermesService, hermesTools } from './hermes.ts'
+import { KanbanError, KanbanService } from './kanban.ts'
 import { NoHermes, type HermesBridge } from './hermes/bridge.ts'
 import { MockHermes } from './hermes/mock.ts'
 import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
@@ -88,6 +89,9 @@ export interface DaemonOptions {
   /** The Hermes bridge to use. Default: a mock when JUNOS_HERMES=mock, otherwise "not connected". */
   hermes?: HermesBridge
   hermesPollMs?: number
+  /** Board timing (tests make it fast). */
+  kanbanTickMs?: number
+  kanbanLeaseMs?: number
   /** Workflow timing and loop-guard limits (tests make them small). */
   workflowTickMs?: number
   workflowGraceMs?: number
@@ -240,6 +244,13 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         : new NoHermes('Hermes is not connected yet. Start junosd with JUNOS_HERMES=mock to try the console with a stand-in agent.'))
     const hermes = new HermesService({ store: db, gateway, inbox, runs: runMgr, bridge, now: options.now, pollMs: options.hermesPollMs })
     hermesRef = hermes
+    const kanban = new KanbanService({ store: db, inbox, now: options.now, tickMs: options.kanbanTickMs, leaseMs: options.kanbanLeaseMs })
+    kanban.attach(hermes)
+    hermes.attachKanban(kanban)
+    const kanbanFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof KanbanError) return sendJson(res, err.status, { error: err.code, message: err.message })
+      sendJson(res, 500, { error: 'kanban error' })
+    }
     const hermesFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof HermesError) return sendJson(res, err.status, { error: err.code, message: err.message })
       sendJson(res, 500, { error: 'hermes error' })
@@ -540,6 +551,36 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           return workflowFail(res, err)
         }
       }
+      if (url.pathname.startsWith('/api/kanban')) {
+        const sub = url.pathname.slice('/api/kanban'.length)
+        const card = /^\/cards\/([0-9a-f-]{36})(?:\/(comments))?$/.exec(sub)
+        const run = (work: () => unknown, status = 200) => {
+          try {
+            sendJson(res, status, work())
+          } catch (err) {
+            kanbanFail(res, err)
+          }
+        }
+        const withBody = (work: (body: any) => unknown, status = 200) =>
+          void readJson(req, 65_536).then(
+            (body) => run(() => work(body ?? {}), status),
+            () => sendJson(res, 400, { error: 'bad request' }),
+          )
+        if (req.method === 'GET' && sub === '') return run(() => kanban.board())
+        if (req.method === 'POST' && sub === '/cards') return withBody((b) => kanban.create(b), 201)
+        if (req.method === 'POST' && sub === '/cards/bulk') return withBody((b) => ({ cards: kanban.bulk(b.titles) }), 201)
+        if (card) {
+          const [, cardId, comments] = card as unknown as [string, string, string | undefined]
+          if (req.method === 'GET' && !comments) return run(() => {
+            const found = kanban.get(cardId)
+            if (!found) throw new KanbanError(404, 'not_found', 'No such card.')
+            return found
+          })
+          if (req.method === 'PATCH' && !comments) return withBody((b) => kanban.update(cardId, b))
+          if (req.method === 'DELETE' && !comments) return run(() => (kanban.remove(cardId), { deleted: true }))
+          if (req.method === 'POST' && comments) return withBody((b) => kanban.comment(cardId, b.text), 201)
+        }
+      }
       if (url.pathname.startsWith('/api/hermes')) {
         const sub = url.pathname.slice('/api/hermes'.length)
         const ok = (p: Promise<unknown>, status = 200) => void p.then((body) => sendJson(res, status, body), (err) => hermesFail(res, err))
@@ -803,6 +844,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     scheduler.start()
     workflows.begin()
     await hermes.start()
+    kanban.start()
 
     let closing: Promise<void> | undefined
     return {
@@ -814,6 +856,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           await telegram?.stop()
           await scheduler.stop()
           await workflows.end()
+          kanban.stopService()
           await hermes.stopService()
           await runMgr.closeAll()
           for (const res of streams) res.end()

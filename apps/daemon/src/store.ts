@@ -217,6 +217,36 @@ const MIGRATIONS = [
      json TEXT NOT NULL,
      created_at TEXT NOT NULL
    )`,
+  // Kanban (spec 09): one board; automation depends on the column's kind, never its name.
+  `CREATE TABLE kanban_card (
+     id TEXT PRIMARY KEY,
+     column_key TEXT NOT NULL,
+     position REAL NOT NULL,
+     title TEXT NOT NULL,
+     body_md TEXT NOT NULL DEFAULT '',
+     creator TEXT NOT NULL,
+     assignee TEXT NOT NULL DEFAULT 'none',
+     project TEXT NOT NULL DEFAULT '',
+     priority TEXT NOT NULL DEFAULT 'P2',
+     labels_json TEXT NOT NULL DEFAULT '[]',
+     due TEXT,
+     checklist_json TEXT NOT NULL DEFAULT '[]',
+     summary TEXT NOT NULL DEFAULT '',
+     claimed_by TEXT,
+     claim_run TEXT,
+     claim_lease_expires TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   );
+   CREATE INDEX kanban_card_column ON kanban_card (column_key, position);
+   CREATE TABLE kanban_activity (
+     id TEXT PRIMARY KEY,
+     card_id TEXT NOT NULL REFERENCES kanban_card (id) ON DELETE CASCADE,
+     at TEXT NOT NULL,
+     actor TEXT NOT NULL,
+     text TEXT NOT NULL
+   );
+   CREATE INDEX kanban_activity_card ON kanban_activity (card_id, at)`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */

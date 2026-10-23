@@ -1,5 +1,6 @@
 import type {
   HermesDirectiveRequest,
+  KanbanAgentAction,
   HermesMemoryItem,
   HermesMessage,
   HermesMode,
@@ -14,6 +15,10 @@ export type BridgeUpdate =
   | { type: 'message'; message: HermesMessage }
   | { type: 'status'; status: HermesStatus }
   | { type: 'queue'; queue: HermesQueueItem[] }
+  /** A directive ended. This is how the board learns a card's work finished, failed or was stopped. */
+  | { type: 'directive'; directiveId: string; outcome: 'done' | 'failed' | 'stopped'; summary: string }
+  /** Hermes asks something of the board. It is checked on arrival: it can never move a card to Done. */
+  | { type: 'kanban'; action: KanbanAgentAction }
 
 export class BridgeError extends Error {
   readonly code: 'unreachable' | 'not_connected' | 'bad_request' | 'busy'
