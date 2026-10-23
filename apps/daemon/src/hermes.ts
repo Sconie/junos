@@ -134,7 +134,11 @@ export class HermesService {
     } catch (err) {
       next = unreachable(err)
     }
-    this.#setStatus(next)
+    try {
+      this.#setStatus(next)
+    } catch {
+      return // the database is closing
+    }
     if (next.state !== 'unreachable' && (before === 'unreachable' || before === 'error')) {
       try {
         const recent = await this.#o.bridge.recent()
@@ -264,7 +268,7 @@ export class HermesService {
       return await work()
     } catch (err) {
       if (err instanceof BridgeError) {
-        const status = err.code === 'bad_request' ? 400 : err.code === 'busy' ? 409 : 503
+        const status = err.code === 'bad_request' ? 400 : err.code === 'busy' ? 409 : err.code === 'unsupported' ? 501 : 503
         throw new HermesError(status, err.code, err.message)
       }
       throw new HermesError(503, 'unreachable', err instanceof Error ? err.message : 'Hermes could not be reached.')
