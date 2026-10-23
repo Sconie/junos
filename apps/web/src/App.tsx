@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
-import Overview from './pages/Overview'
+import Home from './pages/Home'
+import CommandPalette from './components/CommandPalette'
 import Chat from './pages/Chat'
 import Schedules from './pages/Schedules'
 import Workflows from './pages/Workflows'
@@ -18,7 +19,7 @@ import StopControl from './components/StopControl'
 import { DaemonBanner, DaemonStatus } from './lib/daemon'
 
 const nav = [
-  { to: '/', label: 'Overview', icon: '◎' },
+  { to: '/', label: 'Home', icon: '◎' },
   { to: '/inbox', label: 'Inbox', icon: '✉' },
   { to: '/approvals', label: 'Approvals', icon: '✓' },
   { to: '/chat', label: 'Chat', icon: '✦' },
@@ -50,11 +51,12 @@ export default function App() {
       </aside>
       <main className="content">
         <div className="topbar">
+          <CommandPalette />
           <StopControl />
         </div>
         <DaemonBanner />
         <Routes>
-          <Route path="/" element={<Overview />} />
+          <Route path="/" element={<Home />} />
           <Route path="/inbox" element={<Inbox />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/chat" element={<Chat />} />
