@@ -51,6 +51,7 @@ import { HermesError, HermesService, hermesTools } from './hermes.ts'
 import { KanbanError, KanbanService } from './kanban.ts'
 import { FilesError, FilesService } from './files.ts'
 import { ScoutError, ScoutService } from './scout.ts'
+import { HomeService, searchEverything } from './home.ts'
 import { MockVpsShell, TerminalError, TerminalService, terminalTools, type AgentShell, type LocalShell, type ShellOpener } from './terminal.ts'
 import { NoHermes, type HermesBridge } from './hermes/bridge.ts'
 import { MockHermes } from './hermes/mock.ts'
@@ -308,6 +309,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       slotWaitMs: options.scoutSlotWaitMs,
       slotPollMs: 25,
       fetchTimeoutMs: options.scoutFetchTimeoutMs,
+    })
+    const homeCards = new HomeService({
+      inbox: () => {
+        const { items, counts } = inbox.list({ status: 'needs_me' })
+        return { items, total: counts.needsMe }
+      },
+      tasks: () => ({ tasks: scheduler.list(), paused: runMgr.paused }),
+      runs: () => runMgr.list(),
+      workflowRuns: () => workflows.runs(),
+      hermes: () => hermes.overview(),
+      board: () => kanban.board(),
+      connections: () => connections.list(),
+      scout: () => ({ running: scout.overview().running, findings: scout.findings() }),
+      recentFiles: () => files.recentFiles(5),
+      projects: () => files.projectNames(),
+      now: options.now,
     })
     const scoutFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof ScoutError) return sendJson(res, err.status, { error: err.code, message: err.message })
@@ -732,6 +749,20 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         }
         if (req.method === 'GET' && sub === '/projects') return guardAsync(async () => ({ projects: await files.projects() }))
       }
+      if (req.method === 'GET' && url.pathname === '/api/home') {
+        homeCards.get().then(
+          (body) => sendJson(res, 200, body),
+          () => sendJson(res, 500, { error: 'home error' }),
+        )
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/api/search') {
+        try {
+          return sendJson(res, 200, searchEverything({ store: db, workflows: () => workflows.list(), files: (q) => files.search({ q }).hits }, url.searchParams.get('q') ?? ''))
+        } catch {
+          return sendJson(res, 500, { error: 'search error' })
+        }
+      }
       if (url.pathname.startsWith('/api/scout')) {
         const sub = url.pathname.slice('/api/scout'.length)
         const send = (work: () => unknown | Promise<unknown>, status = 200) =>
@@ -1071,6 +1102,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     workflows.begin()
     await hermes.start()
     kanban.start()
+    homeCards.warm()
     scout.start()
     files.start()
     terminal.start()
