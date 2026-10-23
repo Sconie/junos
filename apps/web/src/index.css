@@ -184,3 +184,22 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .stop-effects { font-size: 13px; color: var(--text-dim); }
 .stop-effects ul { margin: 6px 0 0; padding-left: 18px; }
 .daemon-unpair-error { color: var(--warn); font-size: 12px; }
+
+/* chat */
+.chat-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 20px; }
+.conv-list { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.conv-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; overflow-y: auto; }
+.conv { width: 100%; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; border-color: transparent; color: var(--text-dim); }
+.conv[aria-pressed="true"] { background: var(--panel-strong); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-route { font-size: 12px; margin-left: auto; align-self: center; }
+.bubble { white-space: pre-wrap; word-break: break-word; }
+.bubble-head { font-size: 12px; margin-bottom: 4px; }
+.bubble-text { max-width: 760px; }
+.bubble-note { font-size: 12px; margin-top: 6px; }
+.bubble-error { color: var(--bad); }
+.bubble-thinking { font-size: 13px; color: var(--text-dim); margin-bottom: 6px; }
+.disclosure { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.disclosure p { margin: 0; flex: 1 1 280px; }
+.composer textarea { flex: 1; font: inherit; color: var(--text); background: var(--panel-strong); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+@media (max-width: 900px) { .chat-layout { grid-template-columns: minmax(0, 1fr); height: auto; } .conv-list ul { max-height: 140px; } }
