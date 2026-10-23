@@ -37,6 +37,10 @@ export interface BootOptions {
   stopGraceMs?: number
   stopConfirmMs?: number
   sweepMs?: number
+  schedulerTickMs?: number
+  schedulerGraceMs?: number
+  schedulerBackoffMs?: number[]
+  schedulerLeaseMs?: number
 }
 
 export type TestDaemon = Daemon & {
@@ -63,6 +67,10 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     stopGraceMs: options.stopGraceMs ?? 300,
     stopConfirmMs: options.stopConfirmMs ?? 1500,
     sweepMs: options.sweepMs,
+    schedulerTickMs: options.schedulerTickMs ?? 40,
+    schedulerGraceMs: options.schedulerGraceMs,
+    schedulerBackoffMs: options.schedulerBackoffMs,
+    schedulerLeaseMs: options.schedulerLeaseMs,
     onPairingCode: (c) => {
       announced = c
     },

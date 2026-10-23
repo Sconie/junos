@@ -121,6 +121,44 @@ const MIGRATIONS = [
    );
    CREATE INDEX inbox_status ON inbox_item (status, priority, created_at);
    CREATE UNIQUE INDEX inbox_ref ON inbox_item (kind, ref_id) WHERE ref_id IS NOT NULL`,
+  // Scheduled tasks (spec 05). Schedules are persisted run rows, so nothing depends on in-memory timers.
+  `CREATE TABLE task (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     prompt TEXT NOT NULL,
+     provider TEXT NOT NULL,
+     model TEXT NOT NULL DEFAULT '',
+     effort TEXT NOT NULL DEFAULT 'medium',
+     cron TEXT NOT NULL,
+     timezone TEXT NOT NULL,
+     enabled INTEGER NOT NULL DEFAULT 1,
+     catch_up TEXT NOT NULL DEFAULT 'skip',
+     overlap TEXT NOT NULL DEFAULT 'skip',
+     max_attempts INTEGER NOT NULL DEFAULT 3,
+     materialised_until TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   );
+   CREATE TABLE scheduled_run (
+     id TEXT PRIMARY KEY,
+     task_id TEXT NOT NULL REFERENCES task (id) ON DELETE CASCADE,
+     due_at TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('due','claimed','running','succeeded','failed','skipped')),
+     lease_owner TEXT,
+     lease_expires_at TEXT,
+     attempt INTEGER NOT NULL DEFAULT 0,
+     retry_at TEXT,
+     run_id TEXT,
+     manual INTEGER NOT NULL DEFAULT 0,
+     started_at TEXT,
+     finished_at TEXT,
+     error TEXT,
+     output TEXT,
+     log TEXT NOT NULL DEFAULT '[]',
+     created_at TEXT NOT NULL,
+     UNIQUE (task_id, due_at)
+   );
+   CREATE INDEX scheduled_run_status ON scheduled_run (status, due_at)`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */

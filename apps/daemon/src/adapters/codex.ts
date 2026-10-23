@@ -147,7 +147,7 @@ export class CodexAdapter implements ProviderAdapter {
     let stderrTail = ''
     const emit = (events: RunEvent[]) => events.forEach(req.onEvent)
     return runs.start({
-      kind: 'chat',
+      kind: req.kind ?? 'chat',
       source: 'codex',
       provider: 'codex',
       model: req.model || 'default',

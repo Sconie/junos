@@ -98,6 +98,8 @@ export interface ChatOptions {
   /** An empty directory for provider CLIs to run in. */
   cwd: string
   now?: () => number
+  /** True while a scheduled task has claimed a provider but its run does not exist yet. */
+  providerClaimed?: (provider: ProviderId) => boolean
 }
 
 export class ChatService {
@@ -106,6 +108,7 @@ export class ChatService {
   readonly #adapters: Map<ProviderId, ProviderAdapter>
   readonly #cwd: string
   readonly #now: () => number
+  readonly #providerClaimed: (provider: ProviderId) => boolean
   readonly #streams = new Map<string, RunStream>()
 
   constructor(options: ChatOptions) {
@@ -114,6 +117,7 @@ export class ChatService {
     this.#adapters = new Map(options.adapters.map((a) => [a.id, a]))
     this.#cwd = options.cwd
     this.#now = options.now ?? Date.now
+    this.#providerClaimed = options.providerClaimed ?? (() => false)
     // A reply that was streaming when junosd died can never finish.
     this.#store.db
       .prepare(`UPDATE message SET status = 'error', error = 'junosd restarted before this reply finished' WHERE status = 'streaming'`)
@@ -156,6 +160,18 @@ export class ChatService {
     if (!info) throw new ChatError(400, 'unknown_model', `Unknown model for ${adapter.id}: ${model}`)
     if (!(EFFORTS as readonly string[]).includes(effort)) throw new ChatError(400, 'unknown_effort', `Unknown effort: ${effort}`)
     if (!info.efforts.includes(effort as Effort)) throw new ChatError(400, 'effort_not_supported', `${info.label} does not support effort ${effort}`)
+  }
+
+  /** The reason a provider, model and effort do not go together, or null when they do. For tasks and workflows. */
+  checkChoice(provider: ProviderId, model: string, effort: string): string | null {
+    const adapter = this.#adapters.get(provider)
+    if (!adapter) return `Unknown provider: ${provider}`
+    try {
+      this.#checkModel(adapter, model, effort)
+      return null
+    } catch (err) {
+      return err instanceof Error ? err.message : 'Invalid choice'
+    }
   }
 
   createConversation(input: { title?: string; provider?: string; model?: string; effort?: string; allowedProviders?: string[] }): ConversationRecord {
@@ -229,7 +245,7 @@ export class ChatService {
     if (busy) throw new ChatError(409, 'busy', 'A reply is still being written. Wait for it or stop it first.')
     // Decided 2026-10-22: one job per subscription at a time, so chats cannot starve scheduled work (or each other).
     // A run whose stop was not confirmed may still be alive, so it keeps the slot until it really exits.
-    if (this.#runs.list().some((r) => r.provider === conv.provider && (r.status === 'running' || r.status === 'cancelling' || (r.status === 'stop_unconfirmed' && this.#runs.isTracked(r.id))))) {
+    if (this.#providerClaimed(conv.provider) || this.#runs.list().some((r) => r.provider === conv.provider && (r.status === 'running' || r.status === 'cancelling' || (r.status === 'stop_unconfirmed' && this.#runs.isTracked(r.id))))) {
       throw new ChatError(409, 'provider_busy', `Another ${conv.provider} job is running. Subscriptions run one job at a time.`)
     }
     const now = this.#iso()

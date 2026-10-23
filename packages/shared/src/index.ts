@@ -339,3 +339,72 @@ export interface TelegramStatus {
   /** Updates from anyone but the owner, or in the wrong chat, that were ignored. */
   rejected: number
 }
+
+// ---- Scheduled tasks (spec 05) ----
+
+export const CATCH_UP_MODES = ['skip', 'once', 'all'] as const
+export type CatchUpMode = (typeof CATCH_UP_MODES)[number]
+
+export const OVERLAP_MODES = ['skip', 'queue'] as const
+export type OverlapMode = (typeof OVERLAP_MODES)[number]
+
+export const SCHEDULED_RUN_STATUSES = ['due', 'claimed', 'running', 'succeeded', 'failed', 'skipped'] as const
+export type ScheduledRunStatus = (typeof SCHEDULED_RUN_STATUSES)[number]
+
+/** Body of POST /api/tasks. A task is a prompt sent to a provider on a schedule. */
+export interface TaskInput {
+  name: string
+  prompt: string
+  provider: ProviderId
+  model: string
+  effort: Effort
+  /** Five-field cron. Seconds are not allowed, and neither is anything that fires more often than every 10 minutes. */
+  cron: string
+  timezone: string
+  /** What to do with slots missed while junosd was down (spec 05). */
+  catchUp: CatchUpMode
+  /** What to do when a slot comes due while the previous run of this task is still going. */
+  overlap: OverlapMode
+  maxAttempts: number
+  enabled: boolean
+}
+
+export interface ScheduledRunRecord {
+  id: string
+  taskId: string
+  /** The slot this run is for. Unique per task, so a slot can only exist once. */
+  dueAt: string
+  status: ScheduledRunStatus
+  attempt: number
+  retryAt: string | null
+  manual: boolean
+  startedAt: string | null
+  finishedAt: string | null
+  error: string | null
+  /** What the provider answered, kept for the run log. */
+  output: string | null
+  log: string[]
+  runId: string | null
+}
+
+export interface TaskRecord extends TaskInput {
+  id: string
+  createdAt: string
+  updatedAt: string
+  /** The next five fire times, so the schedule can be checked before it is trusted. */
+  nextRuns: string[]
+  lastRun: ScheduledRunRecord | null
+  running: boolean
+}
+
+export interface TasksResponse {
+  tasks: TaskRecord[]
+  /** True while Stop is in effect: due slots are held, not run. */
+  paused: boolean
+}
+
+export interface CronPreviewResponse {
+  valid: boolean
+  error: string | null
+  nextRuns: string[]
+}

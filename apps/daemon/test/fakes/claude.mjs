@@ -38,6 +38,22 @@ if (process.env.JUNOS_FAKE_LOG) {
   appendFileSync(process.env.JUNOS_FAKE_LOG, JSON.stringify({ args, prompt, cwd: process.cwd(), env: Object.keys(process.env) }) + '\n')
 }
 
+// JUNOS_FAKE_FAIL_FILE holds a number: while it is above zero each call fails and the number goes down.
+if (process.env.JUNOS_FAKE_FAIL_FILE) {
+  const { readFileSync, writeFileSync } = await import('node:fs')
+  let left = 0
+  try {
+    left = Number(readFileSync(process.env.JUNOS_FAKE_FAIL_FILE, 'utf8'))
+  } catch {
+    /* no file: no failures */
+  }
+  if (left > 0) {
+    writeFileSync(process.env.JUNOS_FAKE_FAIL_FILE, String(left - 1))
+    process.stderr.write('fake claude: scripted failure\n')
+    process.exit(1)
+  }
+}
+
 const lastUser = [...prompt.matchAll(/(?:^|\n\n)User: ([\s\S]*?)(?=\n\n(?:Assistant|User):|$)/g)].pop()?.[1]?.trim() ?? ''
 const sessionId = '00000001-0000-4000-8000-000000000000'
 const base = { session_id: sessionId, parent_tool_use_id: null }
