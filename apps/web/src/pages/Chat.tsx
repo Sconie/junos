@@ -42,6 +42,8 @@ export default function Chat() {
   const source = useRef<EventSource | null>(null)
   // Set when a stream ends: the live text stays on screen until the saved reply has been reloaded.
   const clearLiveAfterLoad = useRef(false)
+  // The text streamed so far, kept so a failed reload can still show it instead of an empty bubble.
+  const liveText = useRef('')
   const refresh = useCallback(() => setReload((n) => n + 1), [])
 
   // Provider status and the model list.
@@ -81,16 +83,27 @@ export default function Chat() {
     if (!activeId) return
     let cancelled = false
     // Whatever happens to the fetch, the live bubble must not be left on screen for good.
-    const releaseLive = () => {
-      if (clearLiveAfterLoad.current) {
-        clearLiveAfterLoad.current = false
-        setLive(null)
+    const releaseLive = (failed = false) => {
+      if (!clearLiveAfterLoad.current) return
+      clearLiveAfterLoad.current = false
+      if (failed) {
+        // The saved reply could not be fetched. Show what was streamed and stop pretending it is still running.
+        const text = liveText.current
+        setDetail((d) =>
+          d && {
+            ...d,
+            messages: d.messages.map((m) =>
+              m.status === 'streaming' ? { ...m, status: 'error', content: text, error: 'Could not reload this reply. Reload the page to see the saved version.' } : m,
+            ),
+          },
+        )
       }
+      setLive(null)
     }
     void (async () => {
       try {
         const res = await api(`/conversations/${activeId}`)
-        if (!res.ok) return releaseLive()
+        if (!res.ok) return releaseLive(true)
         if (cancelled) return
         const d = (await res.json()) as ConversationDetail
         if (cancelled) return
@@ -99,7 +112,7 @@ export default function Chat() {
         setModel(d.conversation.model)
         setEffort(d.conversation.effort)
       } catch {
-        releaseLive()
+        releaseLive(true)
       }
     })()
     return () => {
@@ -131,12 +144,16 @@ export default function Chat() {
   const attach = useCallback(
     (runId: string, messageId: string) => {
       closeStream()
+      liveText.current = ''
       setLive({ messageId, text: '', thinking: '' })
       const es = new EventSource(`/api/runs/${runId}/stream`)
       source.current = es
       es.onmessage = (msg) => {
         const event = JSON.parse(msg.data) as RunEvent
-        if (event.type === 'token') setLive((l) => (l ? { ...l, text: l.text + event.text } : l))
+        if (event.type === 'token') {
+          liveText.current += event.text
+          setLive((l) => (l ? { ...l, text: l.text + event.text } : l))
+        }
         else if (event.type === 'thinking') setLive((l) => (l ? { ...l, thinking: l.thinking + event.text } : l))
       }
       const finish = () => {

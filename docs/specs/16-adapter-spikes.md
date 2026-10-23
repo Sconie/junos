@@ -61,3 +61,6 @@ Answers the open question in spec 12. **v1: strictest native mode, a JunOS-owned
 - 03: provider table now links here; Nous row says "via Hermes"; Cursor and Claude flags are recorded.
 - 12: the sandbox open question is closed by the section above.
 - 13: Phase 0 spikes are done on paper; the live-fixture capture is added to #9 and #10.
+
+## Update 2026-10-23: Claude isolation flags verified with one live call
+The adapter's command line (`--setting-sources project --strict-mcp-config --disable-slash-commands --tools "" --system-prompt <short>`, empty working directory, scrubbed environment) was run once for real with a one-word prompt. **Input tokens: 3,126** (2 uncached + 3,122 cache creation), 4 output tokens, about $0.013 at API rates, `apiKeySource: none` (the plan, not an API key). The first, unisolated call used **435,880** input tokens (about $3.49), so the flags cut the cost by about 99.3%. In the init event: 0 tools, 0 MCP servers, 0 commands and skills, 0 hook events; 3 plugins and 6 agents are still listed (they are loaded by name but contribute little). The `provider.heavy_context` guard (above 60k input tokens) did not fire. A caveat: the cache-creation figure is for a cold start, so the first message of a session costs about 3k tokens and later ones should read mostly from cache.
