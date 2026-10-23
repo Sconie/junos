@@ -142,6 +142,89 @@ describe('pairing', () => {
     assert.deepEqual(await res.json(), { error: 'expired' })
   })
 
+  it('expires sessions server-side at 30 days and carries the expiry across restart', async () => {
+    let now = Date.UTC(2026, 0, 1)
+    const { home, d } = await daemon({ now: () => now })
+    const browser = await d.pair()
+    await d.close()
+
+    now += 30 * 24 * 60 * 60 * 1000 - 1
+    const restarted = await boot(home, { now: () => now })
+    cleanups.push(() => restarted.close())
+    const restartedBrowser = restarted.browser()
+    restartedBrowser.cookie = browser.cookie
+    restartedBrowser.csrf = browser.csrf
+    assert.equal((await restartedBrowser.get('/api/status')).status, 200, 'session remains valid one millisecond before expiry')
+
+    now += 1
+    const status = await restartedBrowser.get('/api/status')
+    assert.equal(status.status, 401)
+    assert.deepEqual(await (await restartedBrowser.get('/api/session')).json(), { paired: false })
+    assert.equal(restarted.store.activeSessionCount(now), 0)
+
+    now += 1
+    assert.equal((await restartedBrowser.get('/api/status')).status, 401, 'session remains expired after restart')
+  })
+
+  it('restores a pairing code once the last session expires, without rotating it on checks', async () => {
+    let now = Date.UTC(2026, 0, 1)
+    const { d } = await daemon({ now: () => now })
+    const browser = await d.pair()
+    now += 30 * 24 * 60 * 60 * 1000
+
+    assert.deepEqual(await (await browser.get('/api/session')).json(), { paired: false })
+    const availableCode = d.code()
+    assert.deepEqual(await (await browser.get('/api/session')).json(), { paired: false })
+    assert.equal(d.code(), availableCode, 'rechecking an unpaired session does not invalidate the code')
+    const secondBrowser = d.browser()
+    assert.equal((await secondBrowser.pair(availableCode)).status, 200)
+  })
+
+  it('ends expired SSE streams before live events and heartbeats, without rotating a recovery code', async () => {
+    let now = Date.UTC(2026, 0, 1)
+    const { d } = await daemon({ now: () => now })
+    const browser = await d.pair()
+    const streams = await Promise.all([
+      openSse(d.url, { cookie: browser.cookie }),
+      openSse(d.url, { cookie: browser.cookie }),
+    ])
+    cleanups.push(...streams.map((stream) => () => stream.close()))
+    await Promise.all(streams.map((stream) => stream.waitFor((message) => message.event === 'ready')))
+
+    const heartbeatCounts = streams.map((stream) => stream.messages.filter((message) => message.event === 'heartbeat').length)
+    now += 30 * 24 * 60 * 60 * 1000
+    await browser.get('/api/session')
+    const recoveryCode = d.code()
+    d.store.append('test.after-expiry')
+    await Promise.race([
+      Promise.all(streams.map((stream) => stream.ended)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('stream stayed open after session expiry')), 1000)),
+    ])
+    assert.ok(streams.every((stream) => !stream.events().some((event) => event.type === 'test.after-expiry')), 'expired streams receive no live event')
+    assert.ok(streams.every((stream, index) => stream.messages.filter((message) => message.event === 'heartbeat').length === heartbeatCounts[index]), 'expired streams receive no further heartbeat')
+    assert.equal(d.store.activeSessionCount(now), 0)
+    assert.deepEqual(await (await browser.get('/api/session')).json(), { paired: false })
+    assert.equal(d.code(), recoveryCode, 'expired streams do not repeatedly rotate the code')
+  })
+
+  it('closes an idle expired stream on heartbeat without waiting for a live event', async () => {
+    let now = Date.UTC(2026, 0, 1)
+    const { d } = await daemon({ now: () => now })
+    const browser = await d.pair()
+    const stream = await openSse(d.url, { cookie: browser.cookie })
+    cleanups.push(() => stream.close())
+    await stream.waitFor((message) => message.event === 'ready')
+    const heartbeatCount = stream.messages.filter((message) => message.event === 'heartbeat').length
+
+    now += 30 * 24 * 60 * 60 * 1000
+    await Promise.race([
+      stream.ended,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('idle expired stream stayed open')), 1000)),
+    ])
+    assert.equal(stream.messages.filter((message) => message.event === 'heartbeat').length, heartbeatCount)
+    assert.equal((await d.browser().pair(d.code())).status, 200, 'the heartbeat restores a usable pairing code')
+  })
+
   it('lets a paired browser mint a code for a second browser', async () => {
     const { d } = await daemon()
     const first = await d.pair()

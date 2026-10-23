@@ -4,7 +4,8 @@ import type { EventStore } from './store.ts'
 
 export const SESSION_COOKIE = 'junos_session'
 export const CSRF_HEADER = 'x-junos-csrf'
-const SESSION_MAX_AGE_S = 30 * 24 * 60 * 60
+export const SESSION_MAX_AGE_S = 30 * 24 * 60 * 60
+export const SESSION_TTL_MS = SESSION_MAX_AGE_S * 1000
 
 // No 0/O/1/I so a code read off a terminal is hard to mistype.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -56,6 +57,12 @@ export class Pairing {
     return { code, expiresAt: this.#expiresAt }
   }
 
+  /** Ensures an owner can pair again without invalidating a still-valid code. */
+  ensureAvailable(): void {
+    if (this.#code !== null && this.#now() <= this.#expiresAt) return
+    this.issue()
+  }
+
   redeem(input: string): RedeemResult {
     if (this.#code === null) return 'invalid'
     if (this.#now() > this.#expiresAt) {
@@ -96,17 +103,17 @@ export function parseCookies(header: string | undefined): Record<string, string>
   return out
 }
 
-export function createSession(store: EventStore): { token: string; csrf: string; id: string } {
+export function createSession(store: EventStore, now: () => number = Date.now): { token: string; csrf: string; id: string } {
   const token = randomBytes(32).toString('base64url')
   const csrf = randomBytes(16).toString('base64url')
   const id = randomUUID()
-  store.createSession(id, sha256(token), csrf)
+  store.createSession(id, sha256(token), csrf, now())
   return { token, csrf, id }
 }
 
-export function sessionFromRequest(store: EventStore, req: IncomingMessage): SessionInfo | undefined {
+export function sessionFromRequest(store: EventStore, req: IncomingMessage, now: () => number = Date.now): SessionInfo | undefined {
   const token = parseCookies(req.headers.cookie)[SESSION_COOKIE]
-  return token ? store.sessionByHash(sha256(token)) : undefined
+  return token ? store.sessionByHash(sha256(token), now()) : undefined
 }
 
 export function sessionCookie(token: string): string {
