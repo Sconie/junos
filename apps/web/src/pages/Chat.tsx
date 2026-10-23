@@ -33,7 +33,8 @@ export default function Chat() {
   const { api } = useAuth()
   const [models, setModels] = useState<ModelsResponse | null>(null)
   const [convs, setConvs] = useState<ConversationRecord[]>([])
-  const [activeId, setActiveId] = useState<string | null>(null)
+  // Opened from Files with ?c=<id>: that conversation is the one shown first.
+  const [activeId, setActiveId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('c'))
   const [detail, setDetail] = useState<ConversationDetail | null>(null)
   const [live, setLive] = useState<Live | null>(null)
   const [draft, setDraft] = useState('')

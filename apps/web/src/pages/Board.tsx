@@ -14,7 +14,7 @@ export default function Board() {
   const { lastSeq } = useDaemon()
   const [board, setBoard] = useState<KanbanBoard | null>(null)
   const [who, setWho] = useState<Who>('all')
-  const [project, setProject] = useState('')
+  const [project, setProject] = useState(() => new URLSearchParams(window.location.search).get('project') ?? '')
   const [label, setLabel] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
   const [pasting, setPasting] = useState(false)

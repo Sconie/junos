@@ -247,6 +247,37 @@ const MIGRATIONS = [
      text TEXT NOT NULL
    );
    CREATE INDEX kanban_activity_card ON kanban_activity (card_id, at)`,
+  // Files and projects (spec 11): only folders Jonas adds are ever indexed; removing one deletes everything below.
+  `CREATE TABLE file_folder (
+     id TEXT PRIMARY KEY,
+     path TEXT NOT NULL UNIQUE,
+     label TEXT NOT NULL DEFAULT '',
+     added_at TEXT NOT NULL,
+     scanned_at TEXT,
+     status TEXT NOT NULL DEFAULT 'scanning'
+   );
+   CREATE TABLE file_entry (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     folder_id TEXT NOT NULL,
+     rel_path TEXT NOT NULL,
+     name TEXT NOT NULL,
+     ext TEXT NOT NULL DEFAULT '',
+     kind TEXT NOT NULL,
+     size INTEGER NOT NULL,
+     mtime_ms INTEGER NOT NULL,
+     text_indexed INTEGER NOT NULL DEFAULT 0,
+     UNIQUE (folder_id, rel_path)
+   );
+   CREATE INDEX file_entry_folder ON file_entry (folder_id, rel_path);
+   CREATE TABLE file_project (
+     id TEXT PRIMARY KEY,
+     folder_id TEXT NOT NULL,
+     rel_path TEXT NOT NULL,
+     name TEXT NOT NULL,
+     UNIQUE (folder_id, rel_path)
+   );
+   CREATE VIRTUAL TABLE file_fts USING fts5(path, content);
+   ALTER TABLE conversation ADD COLUMN project_id TEXT`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */

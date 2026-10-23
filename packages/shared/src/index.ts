@@ -205,6 +205,8 @@ export interface ConversationRecord {
   effort: Effort
   /** Providers allowed to receive this conversation's context (spec 12). */
   allowedProviders: ProviderId[]
+  /** The project attached to this conversation: its file list goes with each message, never the tree. */
+  projectId: string | null
   createdAt: string
   updatedAt: string
 }
@@ -236,6 +238,8 @@ export interface SendMessageRequest {
   /** Optional per-message override; it also becomes the conversation's remembered choice. */
   model?: string
   effort?: Effort
+  /** Files from the indexed folders whose text goes with this message. At most 3. */
+  attachments?: AttachedFile[]
 }
 
 export type SendMessageResponse =
@@ -716,3 +720,77 @@ export type KanbanAgentAction =
   | { kind: 'create'; title: string; body?: string }
   | { kind: 'move'; cardId: string; column: string }
   | { kind: 'comment'; cardId: string; text: string }
+
+// ---- Files and projects (spec 11) ----
+
+export const FILE_KINDS = ['markdown', 'code', 'text', 'image', 'pdf', 'other'] as const
+export type FileKind = (typeof FILE_KINDS)[number]
+
+export interface FileFolder {
+  id: string
+  path: string
+  label: string
+  addedAt: string
+  scannedAt: string | null
+  status: 'scanning' | 'ready'
+  fileCount: number
+  projectCount: number
+}
+
+export interface FileEntry {
+  folderId: string
+  path: string
+  name: string
+  kind: FileKind
+  size: number
+  modifiedAt: string
+  projectId: string | null
+}
+
+export interface FileListing {
+  folderId: string
+  dir: string
+  dirs: string[]
+  files: FileEntry[]
+}
+
+export interface FileSearchHit extends FileEntry {
+  /** A text snippet with [[matches]] marked; plain text, to be rendered safely. */
+  snippet: string
+}
+
+export interface FileSearchResponse {
+  /** What the question was understood as. */
+  understood: { text: string; types: FileKind[]; days: number | null }
+  hits: FileSearchHit[]
+}
+
+export type FilePreview =
+  | { kind: 'markdown' | 'code' | 'text'; name: string; size: number; text: string; truncated: boolean }
+  | { kind: 'image'; name: string; size: number; dataUrl: string }
+  | { kind: 'pdf' | 'other'; name: string; size: number; note: string }
+
+export interface FolderRemoval {
+  folderId: string
+  removed: { files: number; projects: number; searchEntries: number }
+}
+
+export interface ProjectRecord {
+  id: string
+  name: string
+  path: string
+  folderId: string
+  fileCount: number
+  languages: Array<{ ext: string; count: number }>
+  branch: string | null
+  lastCommit: { at: string; subject: string } | null
+  /** Changed files in the working tree, or null when git could not say. */
+  dirty: number | null
+  /** Commits per day for the last 14 days, oldest first. */
+  activity: number[]
+}
+
+export interface AttachedFile {
+  folderId: string
+  path: string
+}

@@ -46,6 +46,8 @@ export interface BootOptions {
   hermesPollMs?: number
   kanbanTickMs?: number
   kanbanLeaseMs?: number
+  filesRescanMs?: number
+  filesMaxFiles?: number
   workflowTickMs?: number
   workflowGraceMs?: number
   workflowSlotWaitMs?: number
@@ -87,6 +89,8 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     hermesPollMs: options.hermesPollMs ?? 100,
     kanbanTickMs: options.kanbanTickMs ?? 40,
     kanbanLeaseMs: options.kanbanLeaseMs,
+    filesRescanMs: options.filesRescanMs ?? 3_600_000,
+    filesMaxFiles: options.filesMaxFiles,
     workflowTickMs: options.workflowTickMs ?? 40,
     workflowGraceMs: options.workflowGraceMs,
     workflowSlotWaitMs: options.workflowSlotWaitMs,

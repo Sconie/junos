@@ -7,7 +7,7 @@ import type { InboxService } from './inbox.ts'
 const MAX_FILE_BYTES = 200_000
 
 /** File names that hold credentials: never read, whatever folder they are in. */
-const SECRET_FILE = /(^|[\\/])(\.env(\..*)?|\.npmrc|\.netrc|\.pypirc|id_(rsa|dsa|ecdsa|ed25519)|credentials|.*api[ _-]?key.*|.*secret.*|.*password.*|.*token.*)$|\.(pem|key|pfx|p12|kdbx)$/i
+export const SECRET_FILE = /(^|[\\/])(\.env(\..*)?|\.npmrc|\.netrc|\.pypirc|id_(rsa|dsa|ecdsa|ed25519)|credentials|.*api[ _-]?key.*|.*secret.*|.*password.*|.*token.*)$|\.(pem|key|pfx|p12|kdbx)$/i
 
 /** A refusal whose message is written for the owner, so the gateway may show it. */
 export class ToolRefusal extends Error {

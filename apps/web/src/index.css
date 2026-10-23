@@ -298,3 +298,18 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .chip { font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
 .kanban-drawer { margin-top: 16px; display: grid; gap: 10px; }
 .kanban-checklist, .kanban-activity { list-style: none; padding: 0; display: grid; gap: 6px; }
+
+.projects { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.project h4 { margin: 0 0 4px; }
+.project p { margin: 2px 0; }
+.spark { font-family: ui-monospace, Consolas, monospace; letter-spacing: 1px; color: var(--ok); }
+.files-search { margin: 16px 0; gap: 8px; }
+.files-search input { flex: 1; min-width: 220px; }
+.files-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px; margin-top: 12px; align-items: start; }
+@media (max-width: 900px) { .files-grid { grid-template-columns: minmax(0, 1fr); } }
+.file-list { list-style: none; padding: 0; display: grid; gap: 6px; }
+.file-list li[data-selected="true"] > .link { font-weight: 600; }
+.link { background: none; border: 0; padding: 0; color: var(--accent, var(--ok)); font: inherit; cursor: pointer; text-align: left; }
+.file-preview { width: 100%; min-height: 320px; border: 1px solid var(--border); border-radius: 8px; background: #15171a; }
+.snippet mark { background: color-mix(in srgb, var(--ok) 35%, transparent); color: inherit; }
+a.button { display: inline-block; padding: 3px 8px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; text-decoration: none; color: var(--text); }
