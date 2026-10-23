@@ -44,6 +44,8 @@ export interface BootOptions {
   schedulerLeaseMs?: number
   hermes?: HermesBridge
   hermesPollMs?: number
+  kanbanTickMs?: number
+  kanbanLeaseMs?: number
   workflowTickMs?: number
   workflowGraceMs?: number
   workflowSlotWaitMs?: number
@@ -83,6 +85,8 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     schedulerLeaseMs: options.schedulerLeaseMs,
     hermes: options.hermes,
     hermesPollMs: options.hermesPollMs ?? 100,
+    kanbanTickMs: options.kanbanTickMs ?? 40,
+    kanbanLeaseMs: options.kanbanLeaseMs,
     workflowTickMs: options.workflowTickMs ?? 40,
     workflowGraceMs: options.workflowGraceMs,
     workflowSlotWaitMs: options.workflowSlotWaitMs,

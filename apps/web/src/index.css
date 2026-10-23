@@ -284,3 +284,17 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .hermes-memory li { display: flex; gap: 8px; align-items: center; }
 .hermes-memory li input:not([type="checkbox"]) { flex: 1; }
 .hermes-skills { list-style: none; padding: 0; display: grid; gap: 8px; }
+
+.kanban-filters { align-items: center; margin-top: 12px; }
+.kanban-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 10px; margin-top: 12px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
+.kanban-column { display: grid; gap: 8px; align-content: start; min-height: 160px; }
+.kanban-column h3 { margin: 0; }
+.kanban-column .over { color: var(--warn); }
+.kanban-card { background: var(--panel-strong); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.kanban-card[data-priority="P0"] { border-left: 3px solid var(--bad); }
+.kanban-card[data-priority="P1"] { border-left: 3px solid var(--warn); }
+.kanban-card p { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.kanban-open { background: none; border: 0; padding: 0; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.chip { font-size: 11px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
+.kanban-drawer { margin-top: 16px; display: grid; gap: 10px; }
+.kanban-checklist, .kanban-activity { list-style: none; padding: 0; display: grid; gap: 6px; }

@@ -131,6 +131,15 @@ The **Hermes** screen supervises the agent: a chat of directives and replies, a 
 - **Status** shows `unreachable` (the VPS or tunnel is down) separately from `error`, and recovers on its own; history is kept in SQLite across restarts. Telegram conversations will be mirrored with a "via Telegram" badge (the mock can simulate one).
 - **Real Hermes (not built yet).** Findings so far: Hermes 0.22.2 has an internal API server on 127.0.0.1:8642 and a webhook listener on 127.0.0.1:8644 inside its container, neither published, and memory in `/opt/data/memories/`. The shim therefore has to run on the VPS beside Hermes and be reached over Tailscale. No Hermes credential is stored in this repository.
 
+### Board
+
+The **Board** is one Kanban board with columns Ideas, Ready, In progress, Review, Done and Blocked. Automation depends on a column's *kind*, never its name. Add cards inline or press **c**, paste several lines at once, drag cards between columns (or use the Column field in the card drawer), and filter by Mine, Hermes, project and label. The top line says which card Hermes is working on.
+
+- **Hermes fills it.** Cards Hermes creates land in Ideas, unassigned, with a robot marker. It may move and comment on cards it made or holds, never on anyone else's, and **never move a card to Done**: that is refused and recorded (`kanban.agent.refused`). It cannot give itself work.
+- **Pickup.** Only a card in **Ready** assigned to Hermes is handed over. A label alone never starts work. The pickup is one atomic claim under a lease, so a card is never started twice; Hermes does one card at a time, most urgent first, and only while it is connected, idle and JunOS is not stopped. The card moves to In progress; when the work ends it moves to **Review** with Hermes's summary and an Inbox result, or to **Blocked** with the reason (and an Inbox failure, or after a Stop). A claim nobody renews (a restart) returns the card to Ready with a note. Taking a card back by hand ends Hermes's claim.
+- **Untrusted text.** The card's title and body are wrapped in `<untrusted-data>` markers, with a note not to follow instructions in them, when they are handed to Hermes.
+- Card events (`kanban.card.created|moved|updated|commented|claimed|released|deleted`) stream to the UI. Not built yet: swimlanes, editable columns, and cards from Scout and workflows.
+
 ### Connections
 
 `GET /api/connections` powers the Connections screen: one card per provider with a single state (`connected`, `needs_login`, `rate_limited`, `degraded`, `unavailable`, `unknown`). It is built from offline checks only: `claude auth status`, `codex login status` and `cursor-agent status`, plus plan limits seen in earlier runs (`provider.rate_limited` events). Nothing is sent to a provider and no email, organisation or token is ever returned. A provider signed in with an API key shows as `degraded`, because JunOS does not use API keys. Grok is shown as coming, Nous Portal as reached through Hermes, and Cursor as signed in with chat to come.

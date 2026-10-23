@@ -10,12 +10,19 @@ import type {
   HermesStatus,
   HermesStep,
   JunosEvent,
+  KanbanAgentAction,
 } from '@junos/shared'
 import { BridgeError, type BridgeUpdate, type HermesBridge } from './hermes/bridge.ts'
 import type { Gateway, ToolDef } from './gateway.ts'
 import type { InboxService } from './inbox.ts'
 import type { RunManager } from './runs.ts'
 import type { EventStore } from './store.ts'
+
+/** What the board needs to hear from Hermes. */
+export interface KanbanHooks {
+  agentAction(action: KanbanAgentAction): void
+  directiveEnded(directiveId: string, outcome: 'done' | 'failed' | 'stopped', summary: string): void
+}
 
 export class HermesError extends Error {
   readonly status: number
@@ -81,6 +88,9 @@ export class HermesService {
   #unsubscribeBridge: (() => void) | undefined
   #unsubscribeEvents: (() => void) | undefined
   readonly #asked = new Set<string>()
+  /** Directives the board handed over that have not ended yet: their cards keep their lease. */
+  readonly #open = new Set<string>()
+  #kanban: KanbanHooks | undefined
 
   constructor(options: HermesOptions) {
     this.#o = options
@@ -149,7 +159,11 @@ export class HermesService {
       if (update.type === 'status') this.#setStatus(update.status)
       else if (update.type === 'message') this.#saveMessage(update.message)
       else if (update.type === 'step') this.#saveStep(update.step)
-      else this.#o.store.append('hermes.queue', { count: update.queue.length })
+      else if (update.type === 'queue') this.#o.store.append('hermes.queue', { count: update.queue.length })
+      else if (update.type === 'directive') {
+        this.#open.delete(update.directiveId)
+        this.#kanban?.directiveEnded(update.directiveId, update.outcome, update.summary)
+      } else this.#kanban?.agentAction(update.action)
     } catch {
       /* the database is closing */
     }
@@ -276,6 +290,32 @@ export class HermesService {
       queue,
       stopUnconfirmed: this.#stopUnconfirmed,
     }
+  }
+
+  /** The board listens for what Hermes asks of it and for the end of the work it handed over. */
+  attachKanban(hooks: KanbanHooks): void {
+    this.#kanban = hooks
+  }
+
+  /** True when Hermes is connected, idle and nothing has stopped JunOS: the board may hand it a card. */
+  canTakeWork(): boolean {
+    return this.#o.bridge.mode !== 'none' && !this.#o.runs.paused && this.#status.state === 'idle' && this.#open.size === 0
+  }
+
+  /** Hands a card's work over as a directive. The card text is wrapped as data by the caller. */
+  async assign(text: string): Promise<string> {
+    const { directiveId } = await this.directive({ text, priority: 'normal' })
+    this.#open.add(directiveId)
+    return directiveId
+  }
+
+  forget(directiveId: string): void {
+    this.#open.delete(directiveId)
+  }
+
+  /** Whether a handed-over directive is still going (its card keeps its lease while it is). */
+  isOpen(directiveId: string): boolean {
+    return this.#open.has(directiveId)
   }
 
   async directive(request: HermesDirectiveRequest): Promise<{ directiveId: string }> {

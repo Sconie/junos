@@ -6,6 +6,7 @@ import type {
   HermesQueueItem,
   HermesSkill,
   HermesState,
+  KanbanAgentAction,
   HermesStatus,
   HermesStep,
 } from '@junos/shared'
@@ -77,6 +78,11 @@ export class MockHermes implements HermesBridge {
     const directiveId = randomUUID()
     this.#message('user', text, 'telegram', directiveId)
     this.#message('agent', reply, 'telegram', directiveId)
+  }
+
+  /** Hermes asks something of the board (so a test can try what it must not be allowed to do). */
+  emitKanban(action: KanbanAgentAction): void {
+    this.#emit({ type: 'kanban', action })
   }
 
   // ---- bridge ----
@@ -270,6 +276,7 @@ export class MockHermes implements HermesBridge {
     const epoch = this.#stopFlag
     this.#setState(this.#paused ? 'paused' : 'working', text)
     let reply = `Done: ${text}`
+    let outcome: 'done' | 'failed' | 'stopped' = 'done'
     try {
       const wants = text.toLowerCase()
       await this.#step(epoch, directiveId, 'message', 'Reading the request', text, 'Understood.')
@@ -278,6 +285,12 @@ export class MockHermes implements HermesBridge {
       } else if (wants.includes('fail')) {
         await this.#step(epoch, directiveId, 'shell', 'Run the build', 'npm run build', 'error: build failed', 'failed')
         reply = 'That failed: the build did not pass.'
+        outcome = 'failed'
+      } else if (wants.includes('plan')) {
+        await this.#step(epoch, directiveId, 'message', 'Splitting the work into cards', text, 'two follow-ups')
+        this.#emit({ type: 'kanban', action: { kind: 'create', title: 'Follow-up: check the results', body: `From: ${text}` } })
+        this.#emit({ type: 'kanban', action: { kind: 'create', title: 'Follow-up: tidy up', body: '' } })
+        reply = 'I made two cards.'
       } else if (/\b(send|email|post)\b/.test(wants)) {
         await this.#step(epoch, directiveId, 'file', 'Read the draft', 'cat draft.txt', 'Hello, this is the draft.')
         const id = randomUUID()
@@ -307,8 +320,11 @@ export class MockHermes implements HermesBridge {
       this.#message('agent', reply, 'junos', directiveId)
     } catch (err) {
       if (!(err instanceof Stopped)) throw err
+      reply = 'Stopped.'
+      outcome = 'stopped'
       this.#message('agent', 'Stopped.', 'junos', directiveId)
     } finally {
+      this.#emit({ type: 'directive', directiveId, outcome, summary: reply })
       this.#running = false
       this.#setState(this.#paused ? 'paused' : 'idle', null)
       // Anything queued after a Stop is a new request and still runs.

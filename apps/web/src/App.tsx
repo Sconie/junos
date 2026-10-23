@@ -3,6 +3,7 @@ import Overview from './pages/Overview'
 import Chat from './pages/Chat'
 import Schedules from './pages/Schedules'
 import Workflows from './pages/Workflows'
+import Board from './pages/Board'
 import Hermes from './pages/Hermes'
 import Files from './pages/Files'
 import Connections from './pages/Connections'
@@ -18,6 +19,7 @@ const nav = [
   { to: '/approvals', label: 'Approvals', icon: '✓' },
   { to: '/chat', label: 'Chat', icon: '✦' },
   { to: '/schedules', label: 'Scheduled', icon: '◷' },
+  { to: '/board', label: 'Board', icon: '▥' },
   { to: '/workflows', label: 'Workflows', icon: '⇉' },
   { to: '/hermes', label: 'Hermes', icon: '⚚' },
   { to: '/files', label: 'Files & projects', icon: '▤' },
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/schedules" element={<Schedules />} />
+          <Route path="/board" element={<Board />} />
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/hermes/*" element={<Hermes />} />
           <Route path="/files" element={<Files />} />
