@@ -20,7 +20,7 @@ A personal AI command center that runs on your PC: a daemon (`junosd`) and a bro
 ```
 apps/web         Vite + React UI
 apps/daemon      junosd (Node 24, TypeScript run directly, node:sqlite, SSE)
-apps/desktop     Tauri wrapper: tray, start with the OS (written, not yet built)
+apps/desktop     Tauri wrapper: tray, start with the OS
 packages/shared  contracts shared by both
 scripts/         Windows service install/uninstall (not run automatically)
 docs/specs       the v1 specs
@@ -190,7 +190,7 @@ The **Backups** screen lists every attempt with its result and size, has **Back 
 
 ### Running without the dev server, and the desktop wrapper
 
-junosd serves the **built web app** (`npm run build`, then open `http://127.0.0.1:4777`), so there is one thing to run and no Vite. The files come from `apps/web/dist` (or `JUNOS_UI_DIR`) and only that folder is reachable: no hidden files, no links, no way up a folder, and every page carries a strict content policy (its own scripts only, no framing). The app is public (it holds nothing private and is where pairing happens); the API still needs the pairing. `apps/desktop` is a [Tauri](https://tauri.app) wrapper with a tray icon, start with the OS and close-to-tray. **It is written but has not been built** (no Rust toolchain was available): see `apps/desktop/README.md`.
+junosd serves the **built web app** (`npm run build`, then open `http://127.0.0.1:4777`), so there is one thing to run and no Vite. The files come from `apps/web/dist` (or `JUNOS_UI_DIR`) and only that folder is reachable: no hidden files, no links, no way up a folder, and every page carries a strict content policy (its own scripts only, no framing). The app is public (it holds nothing private and is where pairing happens); the API still needs the pairing. `apps/desktop` is a [Tauri](https://tauri.app) wrapper with a tray icon, start with the OS and close-to-tray. It builds and was checked on Windows 11 (tray icon, Run entry, `--hidden` start, close to tray, single instance, starting junosd); a real restart and the installer were not checked: see `apps/desktop/README.md`.
 
 ### Connections
 
