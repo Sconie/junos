@@ -11,6 +11,9 @@ import {
   type ActionRequest,
   type ApprovalStatus,
   type ConnectionsResponse,
+  type InboxActionRequest,
+  type InboxResponse,
+  type TelegramStatus,
   type ProviderProbe,
   type SendMessageRequest,
   type RunsResponse,
@@ -32,6 +35,8 @@ import { CodexAdapter } from './adapters/codex.ts'
 import { ConnectionsService } from './connections.ts'
 import { ChatError, ChatService } from './chat.ts'
 import { Gateway, testTools, type Autonomy } from './gateway.ts'
+import { InboxError, InboxService } from './inbox.ts'
+import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
 import { acquireLock } from './lock.ts'
 import { FAKE_RUNS, PausedError, RunManager } from './runs.ts'
 import { probeProviders } from './providers.ts'
@@ -59,6 +64,8 @@ export interface DaemonOptions {
   testTools?: boolean
   /** Stop timing: polite-cancel grace and post-kill confirmation window. */
   stopGraceMs?: number
+  /** How often expired approvals are swept and due snoozes wake (default 30 s). */
+  sweepMs?: number
   stopConfirmMs?: number
 }
 
@@ -71,6 +78,7 @@ export interface Daemon {
 const CHAT_ACK_PATH = new RegExp('^/api/chat/disclosures/([a-z]+)/ack$')
 const CONVERSATION_PATH = new RegExp('^/api/conversations/([0-9a-f-]{36})(?:/(messages))?$')
 const RUN_STREAM_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stream$')
+const INBOX_PATH = new RegExp('^/api/inbox/([0-9a-f-]{36})(?:/(action))?$')
 const RUN_STOP_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stop$')
 const APPROVAL_PATH = new RegExp('^/api/approvals/([0-9a-f-]{36})(?:/(approve|deny))?$')
 
@@ -130,6 +138,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const testToolsOn = options.testTools ?? env.JUNOS_TEST_TOOLS === '1'
     const testEffects: Array<Record<string, unknown>> = []
     let runs: RunManager | undefined
+    let inboxRef: InboxService | undefined
     const gateway = new Gateway({
       store: db,
       tools: testToolsOn ? testTools(testEffects) : [],
@@ -143,6 +152,12 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const runMgr = runs
     const chatCwd = join(home, 'chat-cwd')
     mkdirSync(chatCwd, { recursive: true })
+    const inbox = new InboxService({ store: db, gateway, runs: runMgr, now: options.now })
+    inboxRef = inbox
+    const telegramCfg = telegramConfigFromEnv(env)
+    const telegram = telegramCfg.config
+      ? new TelegramBridge({ config: telegramCfg.config, store: db, gateway, inbox, now: options.now })
+      : null
     const adapters = [new ClaudeAdapter(env), new CodexAdapter(env)]
     const chat = new ChatService({ store: db, runs: runMgr, adapters, cwd: chatCwd, now: options.now })
     const connections = new ConnectionsService({ store: db, adapters, env, now: options.now })
@@ -151,7 +166,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (err instanceof PausedError) return sendJson(res, 409, { error: 'paused', message: err.message })
       sendJson(res, 500, { error: 'chat error' })
     }
-    const sweeper = setInterval(() => gateway.sweepExpired(), 30_000)
+    const sweeper = setInterval(() => {
+      gateway.sweepExpired()
+      inboxRef?.wakeDue()
+    }, options.sweepMs ?? 30_000)
     sweeper.unref()
     const streamOwner = new WeakMap<ServerResponse, string>()
     const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })
@@ -293,6 +311,40 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           () => sendJson(res, 500, { error: 'probe failed' }),
         )
         return
+      }
+      if (req.method === 'GET' && url.pathname === '/api/telegram/status') {
+        return sendJson(
+          res,
+          200,
+          telegram
+            ? telegram.status()
+            : ({ enabled: false, reason: telegramCfg.reason, quietHours: telegramCfg.quiet, lastPollAt: null, sent: 0, rejected: 0 } satisfies TelegramStatus),
+        )
+      }
+      if (req.method === 'GET' && url.pathname === '/api/inbox') {
+        return sendJson(res, 200, inbox.list({ status: url.searchParams.get('status') ?? undefined, kind: url.searchParams.get('kind') ?? undefined }) satisfies InboxResponse)
+      }
+      const inboxPath = INBOX_PATH.exec(url.pathname)
+      if (inboxPath) {
+        const [, itemId, act] = inboxPath as unknown as [string, string, string | undefined]
+        if (req.method === 'GET' && !act) {
+          const found = inbox.get(itemId)
+          return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: 'not found' })
+        }
+        if (req.method === 'POST' && act) {
+          readJson(req).then(
+            (body) => {
+              try {
+                sendJson(res, 200, inbox.act(itemId, (body ?? {}) as InboxActionRequest))
+              } catch (err) {
+                if (err instanceof InboxError) return sendJson(res, err.status, { error: err.code, message: err.message })
+                sendJson(res, 500, { error: 'inbox error' })
+              }
+            },
+            () => sendJson(res, 400, { error: 'bad request' }),
+          )
+          return
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/connections') {
         connections.list().then(
@@ -501,6 +553,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     pairing.issue()
     db.append('daemon.started', { version: VERSION, pid: process.pid, port })
     await refreshProviders()
+    telegram?.start()
 
     let closing: Promise<void> | undefined
     return {
@@ -509,6 +562,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       close() {
         closing ??= (async () => {
           clearInterval(sweeper)
+          await telegram?.stop()
           await runMgr.closeAll()
           for (const res of streams) res.end()
           await new Promise<void>((resolve) => {

@@ -279,3 +279,63 @@ export interface ConnectionRecord {
 export interface ConnectionsResponse {
   connections: ConnectionRecord[]
 }
+
+// ---- Inbox and Telegram (spec 07) ----
+
+export const INBOX_KINDS = ['approval', 'failure', 'result', 'finding', 'mention', 'digest'] as const
+export type InboxKind = (typeof INBOX_KINDS)[number]
+
+export type InboxPriority = 'urgent' | 'normal' | 'low'
+/** `resolved` means the thing it was about is settled elsewhere (an approval decided, expired or cancelled). */
+export type InboxStatus = 'new' | 'done' | 'snoozed' | 'resolved'
+
+export interface InboxItem {
+  id: string
+  kind: InboxKind
+  priority: InboxPriority
+  title: string
+  body: string
+  source: string
+  status: InboxStatus
+  /** For a resolved item: what happened ("approved", "denied", "expired"…). */
+  resolution: string | null
+  /** The approval or run this item is about. */
+  refId: string | null
+  createdAt: string
+  updatedAt: string
+  snoozeUntil: string | null
+  /** The live approval record, so the Inbox shows the same ApprovalCard and its current state. */
+  approval?: ApprovalRecord
+}
+
+export interface InboxCounts {
+  /** Items that still need a person: new approvals, failures and mentions. */
+  needsMe: number
+  approvals: number
+  failures: number
+  done: number
+  snoozed: number
+  all: number
+}
+
+export interface InboxResponse {
+  items: InboxItem[]
+  counts: InboxCounts
+}
+
+export interface InboxActionRequest {
+  action: 'done' | 'snooze' | 'reopen'
+  /** For snooze: an ISO time. */
+  until?: string
+}
+
+export interface TelegramStatus {
+  enabled: boolean
+  /** Why it is off, when it is. Never contains the token. */
+  reason: string | null
+  quietHours: { start: string; end: string }
+  lastPollAt: string | null
+  sent: number
+  /** Updates from anyone but the owner, or in the wrong chat, that were ignored. */
+  rejected: number
+}

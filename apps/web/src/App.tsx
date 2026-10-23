@@ -6,11 +6,14 @@ import Hermes from './pages/Hermes'
 import Files from './pages/Files'
 import Connections from './pages/Connections'
 import Approvals from './pages/Approvals'
+import Inbox from './pages/Inbox'
+import InboxBadge from './components/InboxBadge'
 import StopControl from './components/StopControl'
 import { DaemonBanner, DaemonStatus } from './lib/daemon'
 
 const nav = [
   { to: '/', label: 'Overview', icon: '◎' },
+  { to: '/inbox', label: 'Inbox', icon: '✉' },
   { to: '/approvals', label: 'Approvals', icon: '✓' },
   { to: '/chat', label: 'Chat', icon: '✦' },
   { to: '/schedules', label: 'Scheduled', icon: '◷' },
@@ -29,6 +32,7 @@ export default function App() {
             <NavLink key={item.to} to={item.to} end={item.to === '/'} className="nav-link">
               <span className="nav-icon">{item.icon}</span>
               {item.label}
+              {item.to === '/inbox' && <InboxBadge />}
             </NavLink>
           ))}
         </nav>
@@ -41,6 +45,7 @@ export default function App() {
         <DaemonBanner />
         <Routes>
           <Route path="/" element={<Overview />} />
+          <Route path="/inbox" element={<Inbox />} />
           <Route path="/approvals" element={<Approvals />} />
           <Route path="/chat" element={<Chat />} />
           <Route path="/schedules" element={<Schedules />} />

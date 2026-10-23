@@ -100,6 +100,27 @@ const MIGRATIONS = [
      provider TEXT PRIMARY KEY,
      acknowledged_at TEXT NOT NULL
    )`,
+  // Inbox (spec 07): the decision queue. tg_* remember the Telegram message that mirrors an item.
+  `CREATE TABLE inbox_item (
+     id TEXT PRIMARY KEY,
+     kind TEXT NOT NULL,
+     priority TEXT NOT NULL,
+     title TEXT NOT NULL,
+     body TEXT NOT NULL DEFAULT '',
+     source TEXT NOT NULL,
+     key TEXT NOT NULL,
+     status TEXT NOT NULL DEFAULT 'new',
+     resolution TEXT,
+     ref_id TEXT,
+     created_at TEXT NOT NULL,
+     updated_at TEXT NOT NULL,
+     snooze_until TEXT,
+     tg_message_id INTEGER,
+     tg_nonce TEXT,
+     tg_sent_at TEXT
+   );
+   CREATE INDEX inbox_status ON inbox_item (status, priority, created_at);
+   CREATE UNIQUE INDEX inbox_ref ON inbox_item (kind, ref_id) WHERE ref_id IS NOT NULL`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */
