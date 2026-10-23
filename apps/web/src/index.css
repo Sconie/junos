@@ -256,3 +256,31 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .workflow-run .steps li[data-status="succeeded"] b { color: var(--ok); }
 .workflow-run[data-status="failed"] > p:first-child b { color: var(--bad); }
 .workflow-run[data-status="succeeded"] > p:first-child b { color: var(--ok); }
+
+.hermes-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+.hermes-head p { margin: 4px 0 0; }
+.pill { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 12px; background: var(--panel-strong); border: 1px solid var(--border); }
+.pill[data-state="working"] { color: var(--ok); border-color: var(--ok); animation: hermes-pulse 1.4s ease-in-out infinite; }
+.pill[data-state="paused"] { color: var(--warn); border-color: var(--warn); }
+.pill[data-state="unreachable"], .pill[data-state="error"] { color: var(--bad); border-color: var(--bad); }
+@keyframes hermes-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .pill[data-state="working"] { animation: none; } }
+.danger { color: var(--bad); }
+.hermes-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px; margin-top: 12px; align-items: start; }
+@media (max-width: 900px) { .hermes-grid { grid-template-columns: minmax(0, 1fr); } }
+.hermes-messages { display: grid; gap: 8px; max-height: 340px; overflow-y: auto; margin-bottom: 8px; }
+.hermes-msg { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--panel-strong); }
+.hermes-msg.user { border-left: 3px solid var(--border); }
+.hermes-msg.agent { border-left: 3px solid var(--ok); }
+.badge { margin-left: 6px; padding: 0 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--border); color: var(--text-dim); }
+.hermes-activity { max-height: 520px; overflow-y: auto; }
+.hermes-step { border-top: 1px solid var(--border); padding: 8px 0; }
+.hermes-step p { margin: 0 0 4px; }
+.hermes-step[data-status="running"] b { animation: hermes-pulse 1.4s ease-in-out infinite; }
+.hermes-step[data-status="failed"] b, .hermes-step[data-status="denied"] b { color: var(--bad); }
+.hermes-step[data-status="done"] b { color: var(--ok); }
+.hermes-step[data-status="waiting_approval"] b { color: var(--warn); }
+.hermes-memory ul { list-style: none; padding: 0; display: grid; gap: 6px; }
+.hermes-memory li { display: flex; gap: 8px; align-items: center; }
+.hermes-memory li input:not([type="checkbox"]) { flex: 1; }
+.hermes-skills { list-style: none; padding: 0; display: grid; gap: 8px; }

@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import { delimiter, join } from 'node:path'
 import {
   DEFAULT_PORT,
+  type HermesDirectiveRequest,
   type WorkflowRunRequest,
   type WorkflowRunsResponse,
   type WorkflowsResponse,
@@ -46,6 +47,9 @@ import { Scheduler, TaskError, previewCron } from './scheduler.ts'
 import { makeTaskExecutor } from './task-executor.ts'
 import { WorkflowError, WorkflowService } from './workflows.ts'
 import { workflowTools } from './workflow-tools.ts'
+import { HermesError, HermesService, hermesTools } from './hermes.ts'
+import { NoHermes, type HermesBridge } from './hermes/bridge.ts'
+import { MockHermes } from './hermes/mock.ts'
 import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
 import { acquireLock } from './lock.ts'
 import { FAKE_RUNS, PausedError, RunManager } from './runs.ts'
@@ -81,6 +85,9 @@ export interface DaemonOptions {
   schedulerGraceMs?: number
   schedulerBackoffMs?: number[]
   schedulerLeaseMs?: number
+  /** The Hermes bridge to use. Default: a mock when JUNOS_HERMES=mock, otherwise "not connected". */
+  hermes?: HermesBridge
+  hermesPollMs?: number
   /** Workflow timing and loop-guard limits (tests make them small). */
   workflowTickMs?: number
   workflowGraceMs?: number
@@ -165,6 +172,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const testEffects: Array<Record<string, unknown>> = []
     let runs: RunManager | undefined
     let inboxRef: InboxService | undefined
+    let hermesRef: HermesService | undefined
     const fileRoots = [join(home, 'files'), ...(env.JUNOS_FILE_ROOTS ?? '').split(delimiter).filter(Boolean)]
     mkdirSync(fileRoots[0]!, { recursive: true })
     const gateway = new Gateway({
@@ -173,6 +181,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         ...(testToolsOn ? testTools(testEffects) : []),
         // The inbox does not exist yet (it needs the gateway); the tools only reach it when they run.
         ...workflowTools({ inbox: { list: (f) => inboxRef!.list(f) }, fileRoots, now: options.now }),
+        ...hermesTools(() => hermesRef),
       ],
       now: options.now,
       approvalTtlMs: options.approvalTtlMs,
@@ -224,6 +233,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       globalPerHour: options.workflowGlobalPerHour,
       maxDepth: options.workflowMaxDepth,
     })
+    const bridge =
+      options.hermes ??
+      (env.JUNOS_HERMES === 'mock'
+        ? new MockHermes({ now: options.now })
+        : new NoHermes('Hermes is not connected yet. Start junosd with JUNOS_HERMES=mock to try the console with a stand-in agent.'))
+    const hermes = new HermesService({ store: db, gateway, inbox, runs: runMgr, bridge, now: options.now, pollMs: options.hermesPollMs })
+    hermesRef = hermes
+    const hermesFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof HermesError) return sendJson(res, err.status, { error: err.code, message: err.message })
+      sendJson(res, 500, { error: 'hermes error' })
+    }
     const workflowFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof WorkflowError) return sendJson(res, err.status, { error: err.code, message: err.message, errors: err.errors })
       sendJson(res, 500, { error: 'workflow error' })
@@ -520,6 +540,24 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           return workflowFail(res, err)
         }
       }
+      if (url.pathname.startsWith('/api/hermes')) {
+        const sub = url.pathname.slice('/api/hermes'.length)
+        const ok = (p: Promise<unknown>, status = 200) => void p.then((body) => sendJson(res, status, body), (err) => hermesFail(res, err))
+        const withBody = (limit: number, run: (body: unknown) => Promise<unknown>, status = 200) =>
+          void readJson(req, limit).then(
+            (body) => ok(run(body), status),
+            () => sendJson(res, 400, { error: 'bad request' }),
+          )
+        if (req.method === 'GET' && sub === '') return ok(hermes.overview())
+        if (req.method === 'GET' && sub === '/memory') return ok(hermes.memory().then((items) => ({ items })))
+        if (req.method === 'PUT' && sub === '/memory') return withBody(262_144, (b) => hermes.setMemory((b as { items?: unknown })?.items).then((items) => ({ items })))
+        if (req.method === 'GET' && sub === '/skills') return ok(hermes.skills().then((skills) => ({ skills })))
+        if (req.method === 'PUT' && sub === '/skills') return withBody(16_384, (b) => hermes.setSkills((b as { skills?: unknown })?.skills).then((skills) => ({ skills })))
+        if (req.method === 'POST' && sub === '/directives') return withBody(16_384, (b) => hermes.directive((b ?? {}) as HermesDirectiveRequest), 202)
+        if (req.method === 'POST' && sub === '/pause') return ok(hermes.pause().then(() => hermes.overview()))
+        if (req.method === 'POST' && sub === '/resume') return ok(hermes.resume().then(() => hermes.overview()))
+        if (req.method === 'POST' && sub === '/stop') return ok(hermes.stop())
+      }
       if (req.method === 'GET' && url.pathname === '/api/telegram/status') {
         return sendJson(
           res,
@@ -764,6 +802,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     telegram?.start()
     scheduler.start()
     workflows.begin()
+    await hermes.start()
 
     let closing: Promise<void> | undefined
     return {
@@ -775,6 +814,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           await telegram?.stop()
           await scheduler.stop()
           await workflows.end()
+          await hermes.stopService()
           await runMgr.closeAll()
           for (const res of streams) res.end()
           await new Promise<void>((resolve) => {

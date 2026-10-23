@@ -121,6 +121,16 @@ steps:
 - **Files** are read only from `~/.junos/files` and folders in `JUNOS_FILE_ROOTS` (path-separated), by real path (links cannot escape), at most 200 KB, text only, never credential-looking names (`.env`, keys, files named for secrets or tokens).
 - A run keeps a snapshot of the definition it started with, so editing the file does not change a run in flight. A step that may already have had an effect is never repeated after a restart. A prompt step takes the provider's single slot like chat and tasks.
 
+### Hermes console (mock)
+
+The **Hermes** screen supervises the agent: a chat of directives and replies, a live step timeline, and Memory, Skills, Queue and Logs tabs, with Pause, Resume and Stop. Everything goes through a **bridge** interface (`apps/daemon/src/hermes/bridge.ts`, the wire format in spec 06), so the same console works for the mock now and the real agent later.
+
+- **Not connected by default.** Without configuration the screen says so and keeps its controls off. Start junosd with `JUNOS_HERMES=mock` to use the scripted stand-in (a banner always says it is a mock; nothing leaves the machine). Words in a directive pick the script: "send" asks for approval, "slow" runs until stopped, "fail" fails a step.
+- **Approvals.** A step that needs a yes becomes a gateway approval (`hermes.external-send`, `hermes.destructive`, `hermes.spend`, `hermes.write-local`) bound to that step, shown in the Inbox and on Telegram. Approve releases the step, deny or expiry says no, and Stop withdraws it. These tools are not available to workflows.
+- **Stop** (console button, and part of the global Stop) halts the agent and is recorded. If Hermes cannot confirm, or cannot be reached, the console says "Stop not confirmed" and an urgent Inbox item is raised.
+- **Status** shows `unreachable` (the VPS or tunnel is down) separately from `error`, and recovers on its own; history is kept in SQLite across restarts. Telegram conversations will be mirrored with a "via Telegram" badge (the mock can simulate one).
+- **Real Hermes (not built yet).** Findings so far: Hermes 0.22.2 has an internal API server on 127.0.0.1:8642 and a webhook listener on 127.0.0.1:8644 inside its container, neither published, and memory in `/opt/data/memories/`. The shim therefore has to run on the VPS beside Hermes and be reached over Tailscale. No Hermes credential is stored in this repository.
+
 ### Connections
 
 `GET /api/connections` powers the Connections screen: one card per provider with a single state (`connected`, `needs_login`, `rate_limited`, `degraded`, `unavailable`, `unknown`). It is built from offline checks only: `claude auth status`, `codex login status` and `cursor-agent status`, plus plan limits seen in earlier runs (`provider.rate_limited` events). Nothing is sent to a provider and no email, organisation or token is ever returned. A provider signed in with an API key shows as `degraded`, because JunOS does not use API keys. Grok is shown as coming, Nous Portal as reached through Hermes, and Cursor as signed in with chat to come.

@@ -202,6 +202,21 @@ const MIGRATIONS = [
      due_at TEXT NOT NULL,
      PRIMARY KEY (workflow_id, due_at)
    )`,
+  // Hermes (spec 06): what the console shows survives a restart; the agent keeps only a short ring buffer.
+  `CREATE TABLE hermes_step (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+     id TEXT NOT NULL UNIQUE,
+     approval_id TEXT,
+     json TEXT NOT NULL,
+     updated_at TEXT NOT NULL
+   );
+   CREATE INDEX hermes_step_approval ON hermes_step (approval_id);
+   CREATE TABLE hermes_message (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+     id TEXT NOT NULL UNIQUE,
+     json TEXT NOT NULL,
+     created_at TEXT NOT NULL
+   )`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */
