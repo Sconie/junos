@@ -8,6 +8,7 @@ const pages = [
   { label: 'Board', href: '/board', heading: 'Board' },
   { label: 'Scout', href: '/scout', heading: 'Scout' },
   { label: 'Workflows', href: '/workflows', heading: 'Workflows' },
+  { label: 'Backups', href: '/backups', heading: 'Backups' },
   { label: 'Chat', href: '/chat', text: 'Start a conversation.' },
   { label: 'Scheduled', href: '/schedules', heading: 'Scheduled tasks' },
   { label: 'Hermes', href: '/hermes', heading: 'Hermes agent' },

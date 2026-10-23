@@ -20,6 +20,7 @@ A personal AI command center that runs on your PC: a daemon (`junosd`) and a bro
 ```
 apps/web         Vite + React UI
 apps/daemon      junosd (Node 24, TypeScript run directly, node:sqlite, SSE)
+apps/desktop     Tauri wrapper: tray, start with the OS (written, not yet built)
 packages/shared  contracts shared by both
 scripts/         Windows service install/uninstall (not run automatically)
 docs/specs       the v1 specs
@@ -180,6 +181,16 @@ The **Scout** screen suggests changes for JunOS from feeds you switch on, scored
 **Home** is a glance, not a place to work: **Needs you** (the top five Inbox items, approvals first), **Running now**, **Next runs**, **Hermes**, **Board**, **Subscriptions**, **Scout** and **Recent projects and files**, plus a quick ask. `GET /api/home` returns one payload with a status for every card (`ok`, `error`, or `stale` with the last good data and when it is from), so a card that fails or is slow never breaks the page: it says so and offers Retry (and tries again by itself a few times). The sign-in checks are slow, so that card is waited for only 0.7 s, keeps loading in the background and is warmed at start. Home follows the event stream and loads in milliseconds from local data. An approval can be approved from Home only when it is not irreversible; anything that sends, deletes or spends is reviewed in the Inbox (Deny is always one click).
 
 **Ctrl K** (⌘K on a Mac), or the Search button in the top bar, opens the **command palette** from any screen. It jumps to every screen, and finds chats, messages, cards, Scout findings, Inbox items, tasks, workflows, projects and indexed files (`GET /api/search`, local data only; a plain text match, with the file index using its own full-text search and its exclusions). It can add a card from what you typed, send it to Hermes, or start a workflow that needs no input, without leaving the page. What you type is never sent to a model on its own: **Ask Claude** is an explicit last row for a sentence, it says it sends the text, and the provider notice still applies. Matches are fuzzy, what you used last comes first, and everything works from the keyboard.
+
+### Backups
+
+JunOS keeps its state in one SQLite database (`~/.junos/junos.db`), so a backup is one file. A copy is taken **every night** (after 03:00 local, at least twelve hours after the last good one), and **when junosd starts if one is overdue**, so a night the PC was off is made up on the next start. Each copy is taken with SQLite's online backup (a consistent snapshot while junosd keeps running), written under a temporary name, folded into one self-contained file, then **opened again on its own and checked**: SQLite's integrity check, the tables JunOS needs, and that it holds at least the events that existed when the backup began. Only a copy that passes is given its real name (`backups/junos-<time>.db`, readable by you alone). A copy that fails is deleted, recorded, and raised as an urgent Inbox item; the earlier good backups are never touched. The newest 14 good backups are kept. A half-written copy left by a crash is removed at start.
+
+The **Backups** screen lists every attempt with its result and size, has **Back up now**, and says when the next one is due. To check a file by hand: `npm run backup:verify -- <file>` (exit code 0 means usable). **To restore:** stop junosd, check the backup, keep the current `junos.db` aside, copy the backup over `junos.db`, delete `junos.db-wal` and `junos.db-shm` beside it, and start junosd. Browsers stay paired, because sessions are in the database. A backup contains your chats, approvals and everything else in the database, so keep the folder as private as the database itself. Not covered: copying the backups off this machine, and the workflow, Hermes and `files` folders (workflows are plain YAML files you can copy).
+
+### Running without the dev server, and the desktop wrapper
+
+junosd serves the **built web app** (`npm run build`, then open `http://127.0.0.1:4777`), so there is one thing to run and no Vite. The files come from `apps/web/dist` (or `JUNOS_UI_DIR`) and only that folder is reachable: no hidden files, no links, no way up a folder, and every page carries a strict content policy (its own scripts only, no framing). The app is public (it holds nothing private and is where pairing happens); the API still needs the pairing. `apps/desktop` is a [Tauri](https://tauri.app) wrapper with a tray icon, start with the OS and close-to-tray. **It is written but has not been built** (no Rust toolchain was available): see `apps/desktop/README.md`.
 
 ### Connections
 

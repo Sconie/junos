@@ -49,6 +49,13 @@ export interface BootOptions {
   kanbanLeaseMs?: number
   filesRescanMs?: number
   filesMaxFiles?: number
+  backupDir?: string
+  backupKeep?: number
+  backupHour?: number
+  backupTickMs?: number
+  backupAuto?: boolean
+  uiDir?: string | null
+  backupAfterCopy?: (path: string) => void | Promise<void>
   scoutTickMs?: number
   scoutAllowLocal?: boolean
   scoutSlotWaitMs?: number
@@ -101,6 +108,13 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     kanbanLeaseMs: options.kanbanLeaseMs,
     filesRescanMs: options.filesRescanMs ?? 3_600_000,
     filesMaxFiles: options.filesMaxFiles,
+    backupDir: options.backupDir,
+    backupKeep: options.backupKeep,
+    backupHour: options.backupHour,
+    backupTickMs: options.backupTickMs,
+    backupAuto: options.backupAuto ?? false,
+    uiDir: options.uiDir === undefined ? null : options.uiDir,
+    backupAfterCopy: options.backupAfterCopy,
     scoutTickMs: options.scoutTickMs ?? 3_600_000,
     scoutAllowLocal: options.scoutAllowLocal ?? true,
     scoutSlotWaitMs: options.scoutSlotWaitMs,

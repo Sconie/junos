@@ -95,6 +95,7 @@ describe('Command palette', () => {
       ['Hermes', '/hermes'],
       ['Files & projects', '/files'],
       ['Connections', '/connections'],
+      ['Backups', '/backups'],
     ]
     for (const [label, path] of screens) {
       await openPalette()

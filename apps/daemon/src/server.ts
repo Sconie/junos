@@ -1,7 +1,8 @@
 import { mkdirSync, readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   DEFAULT_PORT,
   type HermesDirectiveRequest,
@@ -52,6 +53,8 @@ import { KanbanError, KanbanService } from './kanban.ts'
 import { FilesError, FilesService } from './files.ts'
 import { ScoutError, ScoutService } from './scout.ts'
 import { HomeService, searchEverything } from './home.ts'
+import { BackupError, BackupService } from './backup.ts'
+import { StaticUi } from './static-ui.ts'
 import { MockVpsShell, TerminalError, TerminalService, terminalTools, type AgentShell, type LocalShell, type ShellOpener } from './terminal.ts'
 import { NoHermes, type HermesBridge } from './hermes/bridge.ts'
 import { MockHermes } from './hermes/mock.ts'
@@ -97,6 +100,16 @@ export interface DaemonOptions {
   kanbanTickMs?: number
   /** Index timing and size (tests make them small). */
   filesRescanMs?: number
+  /** Backups: where they go (default `<home>/backups`), how many to keep, the nightly hour, and how often to look. */
+  backupDir?: string
+  backupKeep?: number
+  backupHour?: number
+  backupTickMs?: number
+  /** Turn the nightly schedule off (tests). */
+  backupAuto?: boolean
+  /** The built web app to serve (default: `apps/web/dist` beside the daemon, or JUNOS_UI_DIR). `null` serves none. */
+  uiDir?: string | null
+  backupAfterCopy?: (path: string) => void | Promise<void>
   /** Scout timing; `scoutAllowLocal` lets a feed on this machine be a source (tests only). */
   scoutTickMs?: number
   scoutAllowLocal?: boolean
@@ -310,6 +323,17 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       slotPollMs: 25,
       fetchTimeoutMs: options.scoutFetchTimeoutMs,
     })
+    const backups = new BackupService({
+      store: db,
+      inbox,
+      dir: options.backupDir ?? join(home, 'backups'),
+      now: options.now,
+      keep: options.backupKeep,
+      hour: options.backupHour,
+      tickMs: options.backupTickMs,
+      auto: options.backupAuto,
+      afterCopy: options.backupAfterCopy,
+    })
     const homeCards = new HomeService({
       inbox: () => {
         const { items, counts } = inbox.list({ status: 'needs_me' })
@@ -433,6 +457,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     }
 
     let policy: RequestPolicy | undefined
+    const ui = options.uiDir === null ? null : StaticUi.find([options.uiDir, env.JUNOS_UI_DIR, join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', 'dist')])
 
     server = createServer((req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
@@ -470,6 +495,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         )
         return
       }
+
+      // The web app itself is public (it holds nothing private, and it is where pairing happens). Only files in its build folder.
+      if (ui && (req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api/') && ui.serve(req, res, url.pathname)) return
 
       // 3. Everything else needs the paired browser's cookie, and writes also need its CSRF token.
       if (!session) return sendJson(res, 401, { error: 'unauthorized' })
@@ -748,6 +776,21 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           }
         }
         if (req.method === 'GET' && sub === '/projects') return guardAsync(async () => ({ projects: await files.projects() }))
+      }
+      if (url.pathname === '/api/backups' || url.pathname === '/api/backups/run') {
+        if (req.method === 'GET' && url.pathname === '/api/backups') return sendJson(res, 200, backups.list())
+        if (req.method === 'POST' && url.pathname === '/api/backups/run') {
+          try {
+            backups.run('manual').then(
+              (record) => sendJson(res, 200, record),
+              () => sendJson(res, 500, { error: 'backup error' }),
+            )
+          } catch (err) {
+            if (err instanceof BackupError) sendJson(res, err.status, { error: err.code, message: err.message })
+            else sendJson(res, 500, { error: 'backup error' })
+          }
+          return
+        }
       }
       if (req.method === 'GET' && url.pathname === '/api/home') {
         homeCards.get().then(
@@ -1103,6 +1146,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     await hermes.start()
     kanban.start()
     homeCards.warm()
+    backups.start()
     scout.start()
     files.start()
     terminal.start()
@@ -1119,6 +1163,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           await workflows.end()
           kanban.stopService()
           await scout.stopService()
+          await backups.stopService()
           await files.stopService()
           terminal.stopService()
           await hermes.stopService()
