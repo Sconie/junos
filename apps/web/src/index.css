@@ -317,3 +317,14 @@ a.button { display: inline-block; padding: 3px 8px; font-size: 13px; border: 1px
 .terminal-bar { align-items: center; gap: 8px; margin-top: 12px; }
 .terminal-tab { display: inline-flex; align-items: center; gap: 2px; }
 .terminal-host { height: 460px; margin-top: 8px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: #15171a; }
+
+.scout-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; margin-top: 12px; align-items: start; }
+@media (max-width: 900px) { .scout-grid { grid-template-columns: minmax(0, 1fr); } }
+.scout-finding { display: grid; gap: 4px; margin-top: 8px; }
+.scout-finding p { margin: 2px 0; }
+.scout-finding .chip { margin-right: 4px; }
+.scout-detail { margin-top: 12px; display: grid; gap: 4px; }
+.scout-detail h4 { margin: 8px 0 0; }
+.scout-sources { list-style: none; padding: 0; display: grid; gap: 12px; }
+.scout-sources p { margin: 2px 0; word-break: break-all; }
+.bad { color: var(--bad); }

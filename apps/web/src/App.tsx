@@ -5,6 +5,7 @@ import Chat from './pages/Chat'
 import Schedules from './pages/Schedules'
 import Workflows from './pages/Workflows'
 import Board from './pages/Board'
+import Scout from './pages/Scout'
 // The terminal brings xterm.js with it, so it loads only when opened.
 const Terminal = lazy(() => import('./pages/Terminal'))
 import Hermes from './pages/Hermes'
@@ -23,6 +24,7 @@ const nav = [
   { to: '/chat', label: 'Chat', icon: '✦' },
   { to: '/schedules', label: 'Scheduled', icon: '◷' },
   { to: '/board', label: 'Board', icon: '▥' },
+  { to: '/scout', label: 'Scout', icon: '◈' },
   { to: '/workflows', label: 'Workflows', icon: '⇉' },
   { to: '/terminal', label: 'Terminal', icon: '>_' },
   { to: '/hermes', label: 'Hermes', icon: '⚚' },
@@ -58,6 +60,7 @@ export default function App() {
           <Route path="/chat" element={<Chat />} />
           <Route path="/schedules" element={<Schedules />} />
           <Route path="/board" element={<Board />} />
+          <Route path="/scout" element={<Scout />} />
           <Route
             path="/terminal"
             element={

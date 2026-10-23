@@ -77,7 +77,18 @@ if (mode === 'ratelimit') {
   process.exit(1)
 }
 
-const reply = mode === 'slow' ? 'word '.repeat(400) : `echo: ${lastUser}`
+let reply = mode === 'slow' ? 'word '.repeat(400) : `echo: ${lastUser}`
+// JUNOS_FAKE_SCRIPT is a JSON file of [{ match, reply }]: the first rule whose pattern matches the prompt decides the reply.
+if (process.env.JUNOS_FAKE_SCRIPT) {
+  try {
+    const { readFileSync } = await import('node:fs')
+    const rules = JSON.parse(readFileSync(process.env.JUNOS_FAKE_SCRIPT, 'utf8'))
+    const hit = rules.find((r) => new RegExp(r.match).test(prompt))
+    if (hit) reply = hit.reply
+  } catch {
+    /* no script: the usual echo */
+  }
+}
 const pieces = reply.match(/[\s\S]{1,6}/g)
 
 out({ type: 'stream_event', event: { type: 'message_start', message: { model: 'fake-model', id: 'msg_FIXTURE', type: 'message', role: 'assistant', content: [], usage: { input_tokens: 2, output_tokens: 1 } } }, ...base })
