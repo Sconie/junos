@@ -29,6 +29,8 @@ export class FakeTelegram {
   /** Offsets the daemon polled with, to prove acknowledged updates are not replayed. */
   readonly offsets: number[] = []
   failSend = false
+  /** Makes sendMessage slow, so a test can change things while a send is in flight. */
+  sendDelayMs = 0
   #updates: Array<Record<string, unknown> & { update_id: number }> = []
   #nextUpdate = 1
   #nextMessage = 100
@@ -41,7 +43,7 @@ export class FakeTelegram {
       this.paths.push(req.url ?? '')
       const chunks: Buffer[] = []
       req.on('data', (c: Buffer) => chunks.push(c))
-      req.on('end', () => {
+      req.on('end', async () => {
         const m = /^\/bot([^/]+)\/(\w+)$/.exec(req.url ?? '')
         const reply = (status: number, body: unknown) => {
           res.writeHead(status, { 'content-type': 'application/json' })
@@ -56,6 +58,7 @@ export class FakeTelegram {
             return reply(200, { ok: true, result: this.#updates })
           }
           case 'sendMessage': {
+            if (this.sendDelayMs > 0) await new Promise((r) => setTimeout(r, this.sendDelayMs))
             if (this.failSend) return reply(500, { ok: false, description: `boom for token ${this.token}` })
             const message_id = this.#nextMessage++
             this.sent.push({ message_id, chat_id: body.chat_id, text: body.text, reply_markup: body.reply_markup })

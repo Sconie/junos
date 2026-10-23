@@ -64,6 +64,8 @@ export interface DaemonOptions {
   testTools?: boolean
   /** Stop timing: polite-cancel grace and post-kill confirmation window. */
   stopGraceMs?: number
+  /** How often expired approvals are swept and due snoozes wake (default 30 s). */
+  sweepMs?: number
   stopConfirmMs?: number
 }
 
@@ -136,6 +138,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const testToolsOn = options.testTools ?? env.JUNOS_TEST_TOOLS === '1'
     const testEffects: Array<Record<string, unknown>> = []
     let runs: RunManager | undefined
+    let inboxRef: InboxService | undefined
     const gateway = new Gateway({
       store: db,
       tools: testToolsOn ? testTools(testEffects) : [],
@@ -150,6 +153,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const chatCwd = join(home, 'chat-cwd')
     mkdirSync(chatCwd, { recursive: true })
     const inbox = new InboxService({ store: db, gateway, runs: runMgr, now: options.now })
+    inboxRef = inbox
     const telegramCfg = telegramConfigFromEnv(env)
     const telegram = telegramCfg.config
       ? new TelegramBridge({ config: telegramCfg.config, store: db, gateway, inbox, now: options.now })
@@ -162,7 +166,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (err instanceof PausedError) return sendJson(res, 409, { error: 'paused', message: err.message })
       sendJson(res, 500, { error: 'chat error' })
     }
-    const sweeper = setInterval(() => gateway.sweepExpired(), 30_000)
+    const sweeper = setInterval(() => {
+      gateway.sweepExpired()
+      inboxRef?.wakeDue()
+    }, options.sweepMs ?? 30_000)
     sweeper.unref()
     const streamOwner = new WeakMap<ServerResponse, string>()
     const pairing = new Pairing({ now: options.now, ttlMs: options.pairingTtlMs, onCode: options.onPairingCode })

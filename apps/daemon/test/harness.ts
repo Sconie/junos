@@ -36,6 +36,7 @@ export interface BootOptions {
   testTools?: boolean
   stopGraceMs?: number
   stopConfirmMs?: number
+  sweepMs?: number
 }
 
 export type TestDaemon = Daemon & {
@@ -61,6 +62,7 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     testTools: options.testTools ?? false,
     stopGraceMs: options.stopGraceMs ?? 300,
     stopConfirmMs: options.stopConfirmMs ?? 1500,
+    sweepMs: options.sweepMs,
     onPairingCode: (c) => {
       announced = c
     },

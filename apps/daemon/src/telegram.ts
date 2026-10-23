@@ -99,6 +99,7 @@ export class TelegramBridge {
   #sent = 0
   #rejected = 0
   #running: Promise<void> | null = null
+  readonly #delivering = new Set<string>()
   readonly #unsubscribe: Array<() => void> = []
 
   constructor(options: TelegramOptions) {
@@ -189,16 +190,22 @@ export class TelegramBridge {
     if (item.status !== 'new') return
     const quiet = isQuiet(this.#now(), this.#cfg.quietStart, this.#cfg.quietEnd)
     if (item.kind !== 'approval' && quiet) return
+    // Called from both the creation hook and the poll loop; only one of them may send for an item.
+    if (this.#delivering.has(item.id)) return
     if (this.#inbox.telegram(item.id).messageId !== null) return
+    this.#delivering.add(item.id)
     try {
       if (item.kind === 'approval' && item.approval) {
-        const nonce = token()
+        const nonce = 'p' + token()
         const sent = await this.#call<{ message_id: number }>('sendMessage', {
           chat_id: this.#cfg.userId,
           text: approvalText(item),
           reply_markup: buttons(item.approval.id, nonce, false),
         })
         this.#inbox.setTelegram(item.id, sent.message_id, nonce)
+        // Settled in the Inbox, by expiry or by Stop while the send was in flight: the buttons must not stay live.
+        const now = this.#gateway.get(item.approval.id)
+        if (now && now.status !== 'pending') await this.#edit(sent.message_id, resolvedText({ ...item, approval: now })).catch(() => undefined)
       } else {
         const sent = await this.#call<{ message_id: number }>('sendMessage', { chat_id: this.#cfg.userId, text: `${item.title}\n${item.body}`.slice(0, 400) })
         this.#inbox.setTelegram(item.id, sent.message_id, null)
@@ -207,6 +214,8 @@ export class TelegramBridge {
       this.#store.append('telegram.sent', { itemId: item.id, kind: item.kind }, item.id)
     } catch (err) {
       if (!this.#abort.signal.aborted) this.#store.append('telegram.error', { message: this.#scrub(err), itemId: item.id })
+    } finally {
+      this.#delivering.delete(item.id)
     }
   }
 
@@ -255,7 +264,7 @@ export class TelegramBridge {
     if (!item || !stored || stored.messageId !== messageId || stored.nonce !== nonce) {
       return this.#answer(cq.id, 'This button is out of date.')
     }
-    const confirmStage = nonce.startsWith('c')
+    const confirmStage = nonce.startsWith('q')
     if ((verb === 'y' || verb === 'n') !== confirmStage) return this.#answer(cq.id, 'This button is out of date.')
 
     const approval = this.#gateway.get(approvalId)
@@ -269,7 +278,7 @@ export class TelegramBridge {
     if (verb === 'd' || verb === 'n') {
       if (verb === 'n') {
         // Backing out of the confirmation puts the original buttons back.
-        const fresh = token()
+        const fresh = 'p' + token()
         this.#inbox.setTelegram(item.id, messageId, fresh)
         await this.#edit(messageId, approvalText({ ...item, approval }), buttons(approvalId, fresh, false))
         return this.#answer(cq.id, 'Cancelled.')
@@ -281,7 +290,7 @@ export class TelegramBridge {
     // Approve. Anything that sends, deletes or spends needs a second tap on a fresh one-time code.
     const risky = ALWAYS_ASK_CLASSES.includes(approval.class)
     if (verb === 'a' && risky) {
-      const confirmNonce = 'c' + token()
+      const confirmNonce = 'q' + token()
       this.#inbox.setTelegram(item.id, messageId, confirmNonce)
       await this.#edit(messageId, `Are you sure?\nApprove ${approval.tool}${approval.target ? ` → ${approval.target}` : ''}.${approval.irreversible ? '\nThis cannot be undone.' : ''}`, buttons(approvalId, confirmNonce, true))
       return this.#answer(cq.id, 'Tap again to confirm.')

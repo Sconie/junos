@@ -167,7 +167,8 @@ export class InboxService {
     const existingByRef = this.#byRef(input.kind, input.refId)
     if (existingByRef) return // the same thing again: nothing new to say
     const since = new Date(this.#now() - DEDUPE_MS).toISOString()
-    const dupe = this.#store.db
+    // An approval is its own item even if an earlier one had the same digest: each has to be answerable.
+    const dupe = input.kind === 'approval' ? undefined : this.#store.db
       .prepare(`SELECT * FROM inbox_item WHERE kind = ? AND source = ? AND key = ? AND created_at >= ? AND status != 'resolved' ORDER BY created_at DESC LIMIT 1`)
       .get(input.kind, input.source, input.key, since) as ItemRow | undefined
     if (dupe) {
@@ -274,8 +275,18 @@ export class InboxService {
   }
 
   #wakeSnoozed(): void {
+    this.wakeDue()
+  }
+
+  /** Brings snoozed items back when due, and says so on the event stream so open screens and the badge refresh. */
+  wakeDue(): number {
     const now = this.#iso()
-    this.#store.db.prepare(`UPDATE inbox_item SET status = 'new', snooze_until = NULL, updated_at = ? WHERE status = 'snoozed' AND snooze_until <= ?`).run(now, now)
+    const due = this.#store.db.prepare(`SELECT id, kind FROM inbox_item WHERE status = 'snoozed' AND snooze_until <= ?`).all(now) as Array<{ id: string; kind: string }>
+    for (const { id, kind } of due) {
+      this.#store.db.prepare(`UPDATE inbox_item SET status = 'new', snooze_until = NULL, updated_at = ? WHERE id = ? AND status = 'snoozed'`).run(now, id)
+      this.#store.append('inbox.item', { itemId: id, kind, action: 'woke' }, id)
+    }
+    return due.length
   }
 
   #toItem(row: ItemRow): InboxItem {
