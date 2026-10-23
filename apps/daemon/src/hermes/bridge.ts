@@ -21,7 +21,7 @@ export type BridgeUpdate =
   | { type: 'kanban'; action: KanbanAgentAction }
 
 export class BridgeError extends Error {
-  readonly code: 'unreachable' | 'not_connected' | 'bad_request' | 'busy'
+  readonly code: 'unreachable' | 'not_connected' | 'bad_request' | 'busy' | 'unsupported'
   constructor(code: BridgeError['code'], message: string) {
     super(message)
     this.code = code
