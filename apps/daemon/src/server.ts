@@ -401,16 +401,30 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         if (!live) return sendJson(res, 404, { error: 'no live stream for this run' })
         res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive' })
         const after = Number(req.headers['last-event-id'] ?? url.searchParams.get('lastEventId') ?? 0) || 0
-        const stop = live.subscribe(after, (entry) => {
-          if (res.writableEnded || res.destroyed) return
-          if (entry === null) {
-            res.write('event: end\ndata: {}\n\n')
-            res.end()
-          } else {
-            res.write(`id: ${entry.id}\ndata: ${JSON.stringify(entry.event)}\n\n`)
+        // A write after the client left would raise an unhandled stream error and take the daemon down,
+        // so every write is guarded and the response's errors are swallowed.
+        let gone = false
+        let unsubscribe: (() => void) | undefined
+        const leave = () => {
+          gone = true
+          unsubscribe?.()
+        }
+        res.on('error', leave)
+        res.on('close', leave)
+        const safeWrite = (chunk: string, end = false) => {
+          if (gone || res.writableEnded || res.destroyed) return leave()
+          try {
+            res.write(chunk)
+            if (end) res.end()
+          } catch {
+            leave()
           }
+        }
+        unsubscribe = live.subscribe(after, (entry) => {
+          if (entry === null) safeWrite('event: end\ndata: {}\n\n', true)
+          else safeWrite(`id: ${entry.id}\ndata: ${JSON.stringify(entry.event)}\n\n`)
         })
-        res.on('close', stop)
+        if (gone) unsubscribe()
         return
       }
       if (req.method === 'GET' && url.pathname === '/api/runs') {
