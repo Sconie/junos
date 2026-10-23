@@ -348,6 +348,19 @@ const MIGRATIONS = [
      key TEXT PRIMARY KEY,
      value TEXT NOT NULL
    )`,
+  // Backups: every attempt is recorded; a file is a backup only once its copy has been opened and checked.
+  `CREATE TABLE backup_run (
+     id TEXT PRIMARY KEY,
+     started_at TEXT NOT NULL,
+     finished_at TEXT,
+     status TEXT NOT NULL,
+     trigger TEXT NOT NULL,
+     file TEXT,
+     size INTEGER,
+     verified INTEGER NOT NULL DEFAULT 0,
+     pruned INTEGER NOT NULL DEFAULT 0,
+     error TEXT
+   )`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */

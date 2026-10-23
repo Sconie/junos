@@ -957,3 +957,34 @@ export interface SearchResponse {
   q: string
   groups: SearchGroup[]
 }
+
+// ---- Backups ----
+
+export interface BackupRecord {
+  id: string
+  startedAt: string
+  finishedAt: string | null
+  status: 'running' | 'ok' | 'failed'
+  trigger: 'manual' | 'schedule'
+  /** The backup file's name inside the backups folder. */
+  file: string | null
+  size: number | null
+  /** True only when the copy was opened on its own and passed the checks. */
+  verified: boolean
+  /** False once retention has deleted the file. */
+  present: boolean
+  error: string | null
+}
+
+export interface BackupsResponse {
+  dir: string
+  keep: number
+  /** The local hour after which a nightly backup is due. */
+  hour: number
+  running: boolean
+  /** When the next scheduled backup becomes due (now, if one is overdue). */
+  nextDue: string
+  /** True when that time has already passed (the daemon was off, or the first backup is still to come). */
+  overdue: boolean
+  backups: BackupRecord[]
+}

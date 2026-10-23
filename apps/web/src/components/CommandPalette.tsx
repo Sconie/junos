@@ -27,6 +27,7 @@ const SCREENS: Array<{ to: string; label: string; words?: string }> = [
   { to: '/hermes', label: 'Hermes', words: 'agent' },
   { to: '/files', label: 'Files & projects', words: 'folders search' },
   { to: '/connections', label: 'Connections', words: 'subscriptions providers' },
+  { to: '/backups', label: 'Backups', words: 'restore database copy' },
 ]
 
 const RECENT_KEY = 'junos.palette.recent'
