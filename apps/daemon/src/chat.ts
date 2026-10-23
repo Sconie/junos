@@ -11,6 +11,7 @@ import {
   type ProviderId,
   type ProviderModels,
   type RunEvent,
+  type AttachedFile,
   type SendMessageRequest,
   type SendMessageResponse,
 } from '@junos/shared'
@@ -72,6 +73,7 @@ interface ConversationRow {
   model: string
   effort: Effort
   allowed_providers_json: string
+  project_id: string | null
   created_at: string
   updated_at: string
 }
@@ -100,6 +102,24 @@ export interface ChatOptions {
   now?: () => number
   /** True while a scheduled task has claimed a provider but its run does not exist yet. */
   providerClaimed?: (provider: ProviderId) => boolean
+  /** The indexed folders, for attaching a project or a file. */
+  context?: ChatContext
+}
+
+/** What a conversation may take from the indexed folders. Only names, sizes and attached text ever leave. */
+export interface ChatContext {
+  hasProject(id: string): boolean
+  /** The project's file list (names and sizes, never the tree's contents). */
+  manifest(projectId: string): string | null
+  /** One attached file's text. Throws a message for the owner when it cannot be attached. */
+  readFile(ref: AttachedFile): { name: string; text: string }
+}
+
+const MAX_ATTACHED_TEXT = 300_000
+
+/** Wraps text the model did not get from the user's own message as data. */
+function asData(label: string, text: string): string {
+  return `<untrusted-data source="${label}">\n${text.replaceAll('</untrusted-data>', '[/untrusted-data]')}\n</untrusted-data>`
 }
 
 export class ChatService {
@@ -109,6 +129,7 @@ export class ChatService {
   readonly #cwd: string
   readonly #now: () => number
   readonly #providerClaimed: (provider: ProviderId) => boolean
+  readonly #context: ChatContext | undefined
   readonly #streams = new Map<string, RunStream>()
 
   constructor(options: ChatOptions) {
@@ -118,6 +139,7 @@ export class ChatService {
     this.#cwd = options.cwd
     this.#now = options.now ?? Date.now
     this.#providerClaimed = options.providerClaimed ?? (() => false)
+    this.#context = options.context
     // A reply that was streaming when junosd died can never finish.
     this.#store.db
       .prepare(`UPDATE message SET status = 'error', error = 'junosd restarted before this reply finished' WHERE status = 'streaming'`)
@@ -174,7 +196,8 @@ export class ChatService {
     }
   }
 
-  createConversation(input: { title?: string; provider?: string; model?: string; effort?: string; allowedProviders?: string[] }): ConversationRecord {
+  createConversation(input: { title?: string; provider?: string; model?: string; effort?: string; allowedProviders?: string[]; projectId?: string }): ConversationRecord {
+    if (input.projectId !== undefined && !this.#context?.hasProject(String(input.projectId))) throw new ChatError(400, 'unknown_project', 'That project is not in an indexed folder.')
     const provider = (input.provider ?? 'claude') as ProviderId
     const adapter = this.#adapter(provider)
     const model = input.model ?? ''
@@ -186,10 +209,10 @@ export class ChatService {
     const now = this.#iso()
     this.#store.db
       .prepare(
-        `INSERT INTO conversation (id, title, kind, provider, model, effort, allowed_providers_json, created_at, updated_at)
-         VALUES (?, ?, 'chat', ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO conversation (id, title, kind, provider, model, effort, allowed_providers_json, project_id, created_at, updated_at)
+         VALUES (?, ?, 'chat', ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(id, (input.title ?? 'New chat').slice(0, 80) || 'New chat', provider, model, effort, JSON.stringify(allowed), now, now)
+      .run(id, (input.title ?? 'New chat').slice(0, 80) || 'New chat', provider, model, effort, JSON.stringify(allowed), input.projectId ?? null, now, now)
     return this.#conversation(id)!
   }
 
@@ -224,6 +247,29 @@ export class ChatService {
     if (!content) throw new ChatError(400, 'empty', 'Write something to send')
     if (content.length > MAX_CONTENT) throw new ChatError(400, 'too_long', `Messages are limited to ${MAX_CONTENT} characters`)
 
+    // Attached files and the attached project travel as data, with this message only. Their text is not stored in the chat.
+    const attachments = req.attachments ?? []
+    if (!Array.isArray(attachments) || attachments.length > 3) throw new ChatError(400, 'bad_attachment', 'Attach up to 3 files.')
+    const attachedNames: string[] = []
+    const blocks: string[] = []
+    let attachedChars = 0
+    for (const ref of attachments) {
+      if (!this.#context) throw new ChatError(400, 'bad_attachment', 'Files are not available.')
+      let file
+      try {
+        file = this.#context.readFile(ref)
+      } catch (err) {
+        throw new ChatError(400, 'bad_attachment', err instanceof Error ? err.message : 'That file cannot be attached.')
+      }
+      attachedChars += file.text.length
+      if (attachedChars > MAX_ATTACHED_TEXT) throw new ChatError(400, 'bad_attachment', 'The attached files are too large together.')
+      attachedNames.push(file.name)
+      blocks.push(asData(`file ${file.name}`, file.text))
+    }
+    const manifest = conv.projectId && this.#context ? this.#context.manifest(conv.projectId) : null
+    const extra = [...(manifest ? [manifest] : []), ...blocks].join('\n\n')
+    const stored = attachedNames.length > 0 ? `${content}\n\n(Attached: ${attachedNames.join(', ')})` : content
+
     const model = req.model ?? conv.model
     const effort = (req.effort ?? conv.effort) as Effort
     const adapter = this.#adapter(conv.provider)
@@ -255,7 +301,7 @@ export class ChatService {
       `INSERT INTO message (id, conversation_id, role, provider, model, effort, content_md, status, run_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    insert.run(userId, conversationId, 'user', null, null, null, content, 'complete', null, now)
+    insert.run(userId, conversationId, 'user', null, null, null, stored, 'complete', null, now)
     // The assistant message exists before the run so a reload mid-stream still shows it.
     insert.run(assistantId, conversationId, 'assistant', conv.provider, model, effort, '', 'streaming', null, new Date(this.#now() + 1).toISOString())
     const title = detail.messages.length === 0 && conv.title === 'New chat' ? content.replace(/\s+/g, ' ').slice(0, 48) : conv.title
@@ -263,8 +309,8 @@ export class ChatService {
       .prepare('UPDATE conversation SET model = ?, effort = ?, title = ?, updated_at = ? WHERE id = ?')
       .run(model, effort, title, now, conversationId)
 
-    const history = [...detail.messages, { role: 'user' as const, content: content, status: 'complete' as MessageStatus }]
-    const prompt = buildPrompt(history)
+    const history = [...detail.messages, { role: 'user' as const, content: stored, status: 'complete' as MessageStatus }]
+    const prompt = (extra ? `${extra}\n\n` : '') + buildPrompt(history)
     const stream = new RunStream()
     let text = ''
     let thinking = ''
@@ -349,6 +395,7 @@ function toConversation(row: ConversationRow): ConversationRecord {
     model: row.model,
     effort: row.effort,
     allowedProviders: JSON.parse(row.allowed_providers_json) as ProviderId[],
+    projectId: row.project_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }

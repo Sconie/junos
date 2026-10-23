@@ -49,6 +49,7 @@ import { WorkflowError, WorkflowService } from './workflows.ts'
 import { workflowTools } from './workflow-tools.ts'
 import { HermesError, HermesService, hermesTools } from './hermes.ts'
 import { KanbanError, KanbanService } from './kanban.ts'
+import { FilesError, FilesService } from './files.ts'
 import { NoHermes, type HermesBridge } from './hermes/bridge.ts'
 import { MockHermes } from './hermes/mock.ts'
 import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
@@ -91,6 +92,9 @@ export interface DaemonOptions {
   hermesPollMs?: number
   /** Board timing (tests make it fast). */
   kanbanTickMs?: number
+  /** Index timing and size (tests make them small). */
+  filesRescanMs?: number
+  filesMaxFiles?: number
   kanbanLeaseMs?: number
   /** Workflow timing and loop-guard limits (tests make them small). */
   workflowTickMs?: number
@@ -205,7 +209,20 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       : null
     const adapters = [new ClaudeAdapter(env), new CodexAdapter(env)]
     let schedulerRef: Scheduler | undefined
-    const chat = new ChatService({ store: db, runs: runMgr, adapters, cwd: chatCwd, now: options.now, providerClaimed: (p) => schedulerRef?.providerClaimed(p) ?? false })
+    const files = new FilesService({ store: db, dataHome: home, now: options.now, rescanMs: options.filesRescanMs, maxFiles: options.filesMaxFiles })
+    const filesFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof FilesError) return sendJson(res, err.status, { error: err.code, message: err.message })
+      sendJson(res, 500, { error: 'files error' })
+    }
+    const chat = new ChatService({
+      store: db,
+      runs: runMgr,
+      adapters,
+      cwd: chatCwd,
+      now: options.now,
+      providerClaimed: (p) => schedulerRef?.providerClaimed(p) ?? false,
+      context: { hasProject: (id) => files.hasProject(id), manifest: (id) => files.manifest(id), readFile: (ref) => files.readForChat(ref) },
+    })
     const executor = makeTaskExecutor({ adapters, runs: runMgr, chat, cwd: chatCwd })
     const scheduler = new Scheduler({
       store: db,
@@ -551,6 +568,57 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           return workflowFail(res, err)
         }
       }
+      if (url.pathname.startsWith('/api/files') || url.pathname.startsWith('/api/projects')) {
+        const sub = url.pathname.startsWith('/api/files') ? url.pathname.slice('/api/files'.length) : `/projects${url.pathname.slice('/api/projects'.length)}`
+        const q = url.searchParams
+        const guard = (work: () => unknown, status = 200) => {
+          try {
+            sendJson(res, status, work())
+          } catch (err) {
+            filesFail(res, err)
+          }
+        }
+        const guardAsync = (work: () => Promise<unknown>, status = 200) => void work().then((body) => sendJson(res, status, body), (err) => filesFail(res, err))
+        const folder = /^\/folders\/([0-9a-f-]{36})(?:\/(rescan))?$/.exec(sub)
+        if (req.method === 'GET' && sub === '/folders') return guard(() => ({ folders: files.folders() }))
+        if (req.method === 'POST' && sub === '/folders') {
+          return void readJson(req).then(
+            (body) => guard(() => files.addFolder((body as { path?: unknown })?.path, (body as { label?: unknown })?.label), 201),
+            () => sendJson(res, 400, { error: 'bad request' }),
+          )
+        }
+        if (folder) {
+          const [, folderId, act] = folder as unknown as [string, string, string | undefined]
+          if (req.method === 'DELETE' && !act) return guardAsync(() => files.removeFolder(folderId))
+          if (req.method === 'POST' && act === 'rescan') {
+            return guard(() => {
+              if (!files.folders().some((x) => x.id === folderId)) throw new FilesError(404, 'not_found', 'No such folder.')
+              void files.rescan(folderId).catch(() => {})
+              return { started: true }
+            }, 202)
+          }
+        }
+        if (req.method === 'GET' && sub === '/list') return guard(() => files.list(q.get('folder') ?? '', q.get('dir') ?? ''))
+        if (req.method === 'GET' && sub === '/search') return guard(() => files.search({ q: q.get('q') ?? '', type: q.get('type') ?? undefined, project: q.get('project') ?? undefined, folder: q.get('folder') ?? undefined }))
+        if (req.method === 'GET' && sub === '/preview') return guard(() => files.preview(q.get('folder') ?? '', q.get('path')))
+        if (req.method === 'GET' && sub === '/raw') {
+          try {
+            const file = files.raw(q.get('folder') ?? '', q.get('path'))
+            res.writeHead(200, {
+              'content-type': file.type,
+              'content-length': file.data.length,
+              'content-disposition': `attachment; filename="${file.name.replace(/[^\w. -]/g, '_')}"`,
+              'x-content-type-options': 'nosniff',
+              'content-security-policy': "sandbox; default-src 'none'",
+              'cache-control': 'no-store',
+            })
+            return void res.end(file.data)
+          } catch (err) {
+            return filesFail(res, err)
+          }
+        }
+        if (req.method === 'GET' && sub === '/projects') return guardAsync(async () => ({ projects: await files.projects() }))
+      }
       if (url.pathname.startsWith('/api/kanban')) {
         const sub = url.pathname.slice('/api/kanban'.length)
         const card = /^\/cards\/([0-9a-f-]{36})(?:\/(comments))?$/.exec(sub)
@@ -845,6 +913,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     workflows.begin()
     await hermes.start()
     kanban.start()
+    files.start()
 
     let closing: Promise<void> | undefined
     return {
@@ -857,6 +926,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           await scheduler.stop()
           await workflows.end()
           kanban.stopService()
+          await files.stopService()
           await hermes.stopService()
           await runMgr.closeAll()
           for (const res of streams) res.end()

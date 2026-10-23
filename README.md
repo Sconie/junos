@@ -140,6 +140,17 @@ The **Board** is one Kanban board with columns Ideas, Ready, In progress, Review
 - **Untrusted text.** The card's title and body are wrapped in `<untrusted-data>` markers, with a note not to follow instructions in them, when they are handed to Hermes.
 - Card events (`kanban.card.created|moved|updated|commented|claimed|released|deleted`) stream to the UI. Not built yet: swimlanes, editable columns, and cards from Scout and workflows.
 
+### Files and projects
+
+The **Files & projects** screen is read-only. Add a folder by its full path and JunOS indexes it: nothing outside an added folder is ever read. It refuses a whole drive, your home folder, JunOS's own data folder and overlapping folders.
+
+- **What is left out.** Build output and dependency folders (`node_modules`, `.git`, `dist`, `build`, `target`…), anything in the folder's `.junosignore` (comments, `dir/`, `*.ext`, names, anchored paths; no negation), files with credential-looking names (`.env`, keys, anything named for a secret, password or token, so `tokenizer.ts` is skipped too) and symbolic links (never followed). Exclusions are checked again at search, preview and attach time, so a new `.junosignore` line takes effect before the next scan.
+- **Search** uses SQLite full text (only the files' text up to 200 KB; larger and binary files by name). Ask in words: "PDFs from last week about the API" becomes a type, a time window and words, and the screen shows what it understood. Only changed files are read again on a rescan (manual, or every 5 minutes); there is no file watcher yet, and no AI summaries, tags or embeddings.
+- **Revoking a folder** deletes its index rows, search entries and projects, cancels a scan in progress, and says what was removed.
+- **Previews** render in an iframe with `sandbox=""` (no scripts, no same-origin access) and a policy inside it; Markdown is escaped before it is rendered, so HTML in a file stays text, and links are not live. PDFs and other files are not previewed; images and PDFs can be downloaded as an attachment under `sandbox` and `nosniff`.
+- **Projects** are folders containing `.git`: branch, last commit, changed files, language mix and a 14-day commit sparkline, read with fixed `git` commands (no hooks, no fsmonitor). Not built: open PRs through `gh`, "Open in editor" and "Give to Hermes".
+- **Chat.** "Open in Chat" starts a conversation with the project attached: each message carries the project's file list (names and sizes, never contents) as data. "Ask about this file" attaches up to 3 text files to one message, with secret-looking strings masked; the text goes with that message only and the chat stores just "(Attached: name)". The provider notice must have been accepted first. The CLI still runs in its isolated empty directory with tools off, so a model sees only what you attach.
+
 ### Connections
 
 `GET /api/connections` powers the Connections screen: one card per provider with a single state (`connected`, `needs_login`, `rate_limited`, `degraded`, `unavailable`, `unknown`). It is built from offline checks only: `claude auth status`, `codex login status` and `cursor-agent status`, plus plan limits seen in earlier runs (`provider.rate_limited` events). Nothing is sent to a provider and no email, organisation or token is ever returned. A provider signed in with an API key shows as `degraded`, because JunOS does not use API keys. Grok is shown as coming, Nous Portal as reached through Hermes, and Cursor as signed in with chat to come.

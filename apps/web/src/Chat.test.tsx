@@ -12,6 +12,7 @@ const conv = (over: Partial<ConversationRecord> = {}): ConversationRecord => ({
   model: '',
   effort: 'medium',
   allowedProviders: ['claude'],
+  projectId: null,
   createdAt: '2026-10-22T10:00:00Z',
   updatedAt: '2026-10-22T10:00:00Z',
   ...over,
