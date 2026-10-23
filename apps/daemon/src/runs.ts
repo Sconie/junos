@@ -116,6 +116,11 @@ export class RunManager {
       .run(new Date(this.#now()).toISOString())
   }
 
+  /** True while this daemon still holds the run's process (it may be alive). */
+  isTracked(id: string): boolean {
+    return this.#children.has(id)
+  }
+
   /** The OS pid of a run's process, for tests and diagnostics. */
   pid(id: string): number | undefined {
     return this.#children.get(id)?.child.pid

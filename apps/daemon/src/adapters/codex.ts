@@ -163,7 +163,7 @@ export class CodexAdapter implements ProviderAdapter {
       },
       onEnd: (run) => {
         emit(parser.flush())
-        if (!parser.finished && run.status !== 'stopped') {
+        if (!parser.finished && run.status !== 'stopped' && run.status !== 'stop_unconfirmed') {
           const message = stderrTail.trim() || `Codex exited without an answer (code ${run.exitCode ?? 'unknown'}).`
           req.onEvent({ type: 'error', message, kind: classifyError(message) })
         }

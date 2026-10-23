@@ -312,3 +312,29 @@ describe('Chat provider picker', () => {
     expect(provider.disabled).toBe(true)
   })
 })
+
+describe('Chat provider picker retargets an empty conversation', () => {
+  it('sends to a new conversation for the provider the picker shows, not to the old empty one', async () => {
+    const old = conv({ id: '55555555-5555-4555-8555-555555555555', title: 'Empty one', provider: 'claude' })
+    const calls = mockDaemon({ conversations: [old], details: { [old.id]: [] } })
+    render(<Chat />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Empty one' }))
+    await waitFor(() => expect((screen.getByLabelText('Provider') as HTMLSelectElement).value).toBe('claude'))
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'codex' } })
+    type('for codex please')
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() => expect(FakeEventSource.instances.length).toBe(1))
+    const created = calls.find((c) => c.path === '/conversations' && c.method === 'POST')!
+    expect((created.body as { provider: string }).provider).toBe('codex')
+    const sent = calls.find((c) => c.path.endsWith('/messages'))!
+    expect(sent.path).not.toContain(old.id)
+  })
+
+  it('creates nothing on the server when New chat is clicked', async () => {
+    const calls = mockDaemon()
+    render(<Chat />)
+    fireEvent.click(await screen.findByRole('button', { name: 'New chat' }))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(calls.some((c) => c.path === '/conversations' && c.method === 'POST')).toBe(false)
+  })
+})
