@@ -246,3 +246,13 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .task-run p { margin: 0 0 4px; }
 .task-run[data-status="failed"] b { color: var(--bad); }
 .task-run[data-status="succeeded"] b { color: var(--ok); }
+
+.workflows { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 16px; }
+.workflow { display: grid; gap: 6px; align-content: start; }
+.workflow[data-state="Paused"] h3, .workflow[data-state="Has problems"] h3 { color: var(--warn); }
+.task-form .yaml { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
+.workflow-run .steps { margin: 4px 0 8px; padding-left: 20px; }
+.workflow-run .steps li[data-status="failed"] b { color: var(--bad); }
+.workflow-run .steps li[data-status="succeeded"] b { color: var(--ok); }
+.workflow-run[data-status="failed"] > p:first-child b { color: var(--bad); }
+.workflow-run[data-status="succeeded"] > p:first-child b { color: var(--ok); }

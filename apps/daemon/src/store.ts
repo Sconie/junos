@@ -159,6 +159,49 @@ const MIGRATIONS = [
      UNIQUE (task_id, due_at)
    );
    CREATE INDEX scheduled_run_status ON scheduled_run (status, due_at)`,
+  // Workflows (spec 05). Definitions live as YAML files; a run keeps a snapshot of the definition it executes.
+  `CREATE TABLE workflow_run (
+     id TEXT PRIMARY KEY,
+     workflow_id TEXT NOT NULL,
+     name TEXT NOT NULL,
+     version INTEGER NOT NULL,
+     definition_json TEXT NOT NULL,
+     status TEXT NOT NULL,
+     trigger TEXT NOT NULL,
+     dry_run INTEGER NOT NULL DEFAULT 0,
+     params_json TEXT NOT NULL DEFAULT '{}',
+     chain_json TEXT NOT NULL DEFAULT '[]',
+     started_at TEXT NOT NULL,
+     finished_at TEXT,
+     error TEXT,
+     current_step TEXT,
+     approval_id TEXT
+   );
+   CREATE INDEX workflow_run_wf ON workflow_run (workflow_id, started_at);
+   CREATE TABLE workflow_step_run (
+     id TEXT PRIMARY KEY,
+     run_id TEXT NOT NULL REFERENCES workflow_run (id) ON DELETE CASCADE,
+     seq INTEGER NOT NULL,
+     step_id TEXT NOT NULL,
+     type TEXT NOT NULL,
+     status TEXT NOT NULL,
+     output TEXT,
+     error TEXT,
+     started_at TEXT,
+     finished_at TEXT,
+     UNIQUE (run_id, seq)
+   );
+   CREATE TABLE workflow_state (
+     workflow_id TEXT PRIMARY KEY,
+     paused INTEGER NOT NULL DEFAULT 0,
+     paused_reason TEXT,
+     cron_until TEXT
+   );
+   CREATE TABLE workflow_slot (
+     workflow_id TEXT NOT NULL,
+     due_at TEXT NOT NULL,
+     PRIMARY KEY (workflow_id, due_at)
+   )`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */

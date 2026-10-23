@@ -84,7 +84,7 @@ export type ActionResponse =
   | { status: 'executed'; digest: string; class: ActionClass; result: unknown }
   | { status: 'approval_required'; digest: string; class: ActionClass; approvalId: string; expiresAt: string }
   | { status: 'denied'; digest: string; class: ActionClass; reason: string }
-  | { status: 'rejected'; digest: string; class: ActionClass; reason: ActionRejection }
+  | { status: 'rejected'; digest: string; class: ActionClass; reason: ActionRejection; /** Why a tool refused, when the tool says it is safe to show. */ message?: string }
 
 export type ActionRejection =
   | 'unknown_approval'
@@ -407,4 +407,124 @@ export interface CronPreviewResponse {
   valid: boolean
   error: string | null
   nextRuns: string[]
+}
+
+// ---- Workflows (spec 05) ----
+
+/** The workflow file format JunOS writes. Older files are upgraded on load (with a backup of the old file). */
+export const WORKFLOW_VERSION = 1
+
+export const STEP_TYPES = ['prompt', 'tool', 'approval', 'output'] as const
+export type StepType = (typeof STEP_TYPES)[number]
+
+export interface WorkflowParam {
+  key: string
+  type: 'string' | 'number' | 'boolean' | 'file'
+  label?: string
+  default?: string | number | boolean
+  required?: boolean
+}
+
+export type WorkflowTrigger =
+  | { type: 'manual' }
+  | { type: 'cron'; expr: string; timezone?: string }
+  /** `where` matches fields of the event payload, e.g. { kind: 'failure' }. */
+  | { type: 'event'; event: string; where?: Record<string, string> }
+
+export type WorkflowStep =
+  | { id: string; type: 'prompt'; prompt: string; provider?: ProviderId; model?: string; effort?: Effort; input?: string[] }
+  | { id: string; type: 'tool'; tool: string; args?: Record<string, unknown> }
+  | { id: string; type: 'approval'; message: string }
+  | { id: string; type: 'output'; to: 'inbox'; from?: string; title?: string }
+
+export interface WorkflowDefinition {
+  version: number
+  name: string
+  description?: string
+  /** Defaults for prompt steps that do not name their own. */
+  provider?: ProviderId
+  model?: string
+  effort?: Effort
+  params: WorkflowParam[]
+  triggers: WorkflowTrigger[]
+  steps: WorkflowStep[]
+}
+
+export type WorkflowRunStatus = 'queued' | 'running' | 'waiting_approval' | 'succeeded' | 'failed' | 'cancelled'
+export type WorkflowStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+
+export interface WorkflowStepRecord {
+  seq: number
+  stepId: string
+  type: StepType
+  status: WorkflowStepStatus
+  output: string | null
+  error: string | null
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export interface WorkflowRunRecord {
+  id: string
+  workflowId: string
+  name: string
+  /** The file format version this run executed. Editing the file does not change a run in flight. */
+  version: number
+  status: WorkflowRunStatus
+  trigger: 'manual' | 'cron' | 'event'
+  dryRun: boolean
+  params: Record<string, string | number | boolean>
+  startedAt: string
+  finishedAt: string | null
+  error: string | null
+  currentStep: string | null
+  approvalId: string | null
+  /** The workflows that caused this one, oldest first (loop guard). */
+  chain: string[]
+  steps: WorkflowStepRecord[]
+}
+
+export interface WorkflowSummary {
+  id: string
+  name: string
+  description: string
+  version: number
+  params: WorkflowParam[]
+  triggers: WorkflowTrigger[]
+  valid: boolean
+  errors: string[]
+  /** Set when the file was just upgraded from an older format. */
+  upgradedFrom: number | null
+  paused: boolean
+  pausedReason: string | null
+  running: boolean
+  lastRun: WorkflowRunRecord | null
+}
+
+export interface WorkflowDetail extends WorkflowSummary {
+  yaml: string
+}
+
+export interface WorkflowValidation {
+  valid: boolean
+  errors: string[]
+  definition?: WorkflowDefinition
+  /** The format version the text was written in, when it was older than the current one. */
+  upgradedFrom: number | null
+}
+
+export interface WorkflowRunRequest {
+  params?: Record<string, string | number | boolean>
+  /** Plan the run without sending anything or changing anything. */
+  dryRun?: boolean
+}
+
+export interface WorkflowsResponse {
+  workflows: WorkflowSummary[]
+  /** True while Stop is in effect: nothing starts. */
+  paused: boolean
+}
+
+export interface WorkflowRunsResponse {
+  runs: WorkflowRunRecord[]
 }

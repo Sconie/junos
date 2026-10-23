@@ -75,9 +75,17 @@ interface RunRow {
   created_at: string
 }
 
-/** Runs a task's prompt against its provider. The scheduler decides when; this decides how. */
+/** What a prompt needs to be sent: shared by scheduled tasks and workflow prompt steps. */
+export interface PromptSpec {
+  provider: ProviderId
+  model: string
+  effort: Effort
+  prompt: string
+}
+
+/** Runs a prompt against its provider. The scheduler decides when; this decides how. */
 export interface TaskExecutor {
-  run(task: TaskRow, hooks: { log: (line: string) => void; onRun: (runId: string) => void }): Promise<{ text: string }>
+  run(task: PromptSpec, hooks: { log: (line: string) => void; onRun: (runId: string) => void }): Promise<{ text: string }>
 }
 
 export interface SchedulerOptions {
@@ -297,6 +305,17 @@ export class Scheduler {
       })
       this.#active.set(row.id, promise)
     }
+  }
+
+  /** Takes the provider's one slot for something outside the scheduler (a workflow step). False when it is in use. */
+  tryClaimProvider(provider: ProviderId): boolean {
+    if (this.#providerBusy(provider)) return false
+    this.#claimedProviders.add(provider)
+    return true
+  }
+
+  releaseProvider(provider: ProviderId): void {
+    this.#claimedProviders.delete(provider)
   }
 
   #providerBusy(provider: ProviderId): boolean {

@@ -88,6 +88,39 @@ A task is a prompt sent to one of your subscriptions on a five-field cron schedu
 
 A task sends its prompt to the provider like a chat message does, so the provider notice must have been accepted once in Chat first; otherwise the run fails with a message saying so and nothing is sent.
 
+### Workflows
+
+A workflow is a YAML file in `~/.junos/workflows/` made of steps: **prompt** (send text to a subscription), **tool** (`files.read`, `inbox.summary`, `time.now`), **approval** (waits for you) and **output** (post to the Inbox). Three starters are written once on first start (Morning briefing without mail, Inbox triage, Summarise file); they are ordinary files you can edit or delete. The **Workflows** screen has launcher cards, a Run form for parameters with a **dry run** (shows what each step would do, sends nothing, changes nothing), a YAML editor that checks the text as you type, and the run history with every step's output.
+
+```yaml
+version: 1
+name: Summarise file
+params:
+  - key: path
+    type: file
+    required: true
+steps:
+  - id: file
+    type: tool
+    tool: files.read
+    args: { path: "{{path}}" }
+  - id: summary
+    type: prompt
+    prompt: Summarise the file below in five bullet points.
+    input: [file]
+  - id: post
+    type: output
+    to: inbox
+```
+
+- **Versioned format.** `version: 1` is current. A file with no version (the first sketch: `inputs`, `schedule`) is upgraded on load, with a copy of the old file kept as `name.yaml.bak-v0-<time>`. A file from a newer JunOS is refused and left untouched. Validation names the step and the field.
+- **Approval steps** use the same gateway approvals as the Inbox and Telegram, so they ask even when autonomy is autonomous. The run waits (and survives a restart) until the approval is approved, denied (the run ends as cancelled) or expires (the run fails). **Stop** and **Cancel run** withdraw the approval.
+- **Untrusted data.** What an earlier step produced (a file, an Inbox list, a model reply) goes into later prompts inside `<untrusted-data>` markers with a note not to follow instructions found in it.
+- **Triggers:** by hand, a cron schedule (a persisted slot, so it runs once; missed slots are skipped, a new schedule never backfills), or an Inbox event (`inbox.item.created` or `.resolved`, with a `where` filter on `kind`, `priority`, `source`). Anything that starts by itself needs defaults for its required parameters.
+- **Loop guards.** Each Inbox item a workflow posts remembers which workflows caused it. A workflow is never started by something it caused (directly or through others), a chain is cut at depth 3, one workflow runs at most 10 times an hour and all together at most 60. An automatic start that hits a guard **pauses that workflow** and raises an urgent Inbox item; a manual start is refused with the reason.
+- **Files** are read only from `~/.junos/files` and folders in `JUNOS_FILE_ROOTS` (path-separated), by real path (links cannot escape), at most 200 KB, text only, never credential-looking names (`.env`, keys, files named for secrets or tokens).
+- A run keeps a snapshot of the definition it started with, so editing the file does not change a run in flight. A step that may already have had an effect is never repeated after a restart. A prompt step takes the provider's single slot like chat and tasks.
+
 ### Connections
 
 `GET /api/connections` powers the Connections screen: one card per provider with a single state (`connected`, `needs_login`, `rate_limited`, `degraded`, `unavailable`, `unknown`). It is built from offline checks only: `claude auth status`, `codex login status` and `cursor-agent status`, plus plan limits seen in earlier runs (`provider.rate_limited` events). Nothing is sent to a provider and no email, organisation or token is ever returned. A provider signed in with an API key shows as `degraded`, because JunOS does not use API keys. Grok is shown as coming, Nous Portal as reached through Hermes, and Cursor as signed in with chat to come.

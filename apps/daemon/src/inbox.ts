@@ -164,7 +164,7 @@ export class InboxService {
     return this.#store.db.prepare('SELECT * FROM inbox_item WHERE kind = ? AND ref_id = ?').get(kind, refId) as ItemRow | undefined
   }
 
-  add(input: { kind: InboxKind; priority: InboxPriority; title: string; body: string; source: string; key: string; refId: string }): void {
+  add(input: { kind: InboxKind; priority: InboxPriority; title: string; body: string; source: string; key: string; refId: string; chain?: string[] }): void {
     const now = this.#iso()
     const existingByRef = this.#byRef(input.kind, input.refId)
     if (existingByRef) return // the same thing again: nothing new to say
@@ -189,7 +189,7 @@ export class InboxService {
       )
       .run(id, input.kind, input.priority, input.title, input.body, input.source, input.key, input.refId, now, now)
     const item = this.#item(id)!
-    this.#store.append('inbox.item', { itemId: id, kind: item.kind, priority: item.priority, action: 'created' }, id)
+    this.#store.append('inbox.item', { itemId: id, kind: item.kind, priority: item.priority, source: item.source, action: 'created', chain: input.chain ?? [] }, id)
     for (const fn of this.#created) fn(item)
   }
 
