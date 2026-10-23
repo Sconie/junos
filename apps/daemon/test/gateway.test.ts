@@ -89,7 +89,7 @@ describe('classification and policy', () => {
     const { b, act } = await setup({ testTools: false })
     const info = await b.json<GatewayInfo>('/api/gateway/info')
     assert.equal(info.testTools, false)
-    assert.deepEqual(info.tools, [])
+    assert.deepEqual(info.tools.filter((t) => t.name.startsWith('test.')), [])
     assert.equal((await act(send())).http, 403)
     assert.equal((await b.get('/api/gateway/test-effects')).status, 404)
   })

@@ -20,6 +20,8 @@ export interface ToolDef {
   /** What the action touches (path, recipient, host), shown to the approver and bound into the digest. */
   target(args: Record<string, unknown>): string
   execute(args: Record<string, unknown>): unknown | Promise<unknown>
+  /** Always needs an approval, whatever the autonomy level (a workflow approval step). */
+  alwaysAsk?: boolean
 }
 
 export type Autonomy = GatewayInfo['autonomy']
@@ -90,7 +92,8 @@ export class Gateway {
   }
 
   /** Allow, or ask for approval. The invariants come first and no setting can relax them. */
-  #decide(cls: ActionClass): 'allow' | 'ask' {
+  #decide(cls: ActionClass, tool: ToolDef): 'allow' | 'ask' {
+    if (tool.alwaysAsk) return 'ask'
     if (ALWAYS_ASK_CLASSES.includes(cls)) return 'ask'
     if (cls === 'write-local') return this.#autonomy === 'ask-first' ? 'ask' : 'allow'
     return 'allow'
@@ -126,7 +129,7 @@ export class Gateway {
       return { status: 'denied', digest, class: cls, reason: 'paused' }
     }
 
-    if (this.#decide(cls) === 'allow') {
+    if (this.#decide(cls, tool) === 'allow') {
       audit('gateway.decision', { decision: 'allow' })
       return this.#run(tool, args, digest, cls, audit, undefined)
     }
@@ -213,7 +216,8 @@ export class Gateway {
     } catch (err) {
       // The approval stays consumed: once an action may have started, it is never silently retried.
       audit('gateway.executed', { result: 'failed', error: redact(String((err as Error).message ?? err)), ...approvedBy })
-      return { status: 'rejected', digest, class: cls, reason: 'execution_failed' }
+      const safe = err instanceof Error && (err as { safe?: boolean }).safe === true
+      return { status: 'rejected', digest, class: cls, reason: 'execution_failed', ...(safe ? { message: (err as Error).message } : {}) }
     }
   }
 

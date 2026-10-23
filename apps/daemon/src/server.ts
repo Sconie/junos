@@ -1,9 +1,12 @@
 import { mkdirSync, readFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import {
   DEFAULT_PORT,
+  type WorkflowRunRequest,
+  type WorkflowRunsResponse,
+  type WorkflowsResponse,
   RESYNC_EVENT,
   type HealthResponse,
   type JunosEvent,
@@ -41,6 +44,8 @@ import { Gateway, testTools, type Autonomy } from './gateway.ts'
 import { InboxError, InboxService } from './inbox.ts'
 import { Scheduler, TaskError, previewCron } from './scheduler.ts'
 import { makeTaskExecutor } from './task-executor.ts'
+import { WorkflowError, WorkflowService } from './workflows.ts'
+import { workflowTools } from './workflow-tools.ts'
 import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
 import { acquireLock } from './lock.ts'
 import { FAKE_RUNS, PausedError, RunManager } from './runs.ts'
@@ -76,6 +81,14 @@ export interface DaemonOptions {
   schedulerGraceMs?: number
   schedulerBackoffMs?: number[]
   schedulerLeaseMs?: number
+  /** Workflow timing and loop-guard limits (tests make them small). */
+  workflowTickMs?: number
+  workflowGraceMs?: number
+  workflowSlotWaitMs?: number
+  workflowSlotPollMs?: number
+  workflowRatePerHour?: number
+  workflowGlobalPerHour?: number
+  workflowMaxDepth?: number
   stopConfirmMs?: number
 }
 
@@ -89,6 +102,8 @@ const CHAT_ACK_PATH = new RegExp('^/api/chat/disclosures/([a-z]+)/ack$')
 const CONVERSATION_PATH = new RegExp('^/api/conversations/([0-9a-f-]{36})(?:/(messages))?$')
 const RUN_STREAM_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stream$')
 const TASK_PATH = new RegExp('^/api/tasks/([0-9a-f-]{36})(?:/(runs|run|pause|resume))?$')
+const WORKFLOW_PATH = new RegExp('^/api/workflows/([a-z][a-z0-9-]{0,39})(?:/(run|pause|resume))?$')
+const WORKFLOW_RUN_PATH = new RegExp('^/api/workflow-runs/([0-9a-f-]{36})(?:/(cancel))?$')
 const INBOX_PATH = new RegExp('^/api/inbox/([0-9a-f-]{36})(?:/(action))?$')
 const RUN_STOP_PATH = new RegExp('^/api/runs/([0-9a-f-]{36})/stop$')
 const APPROVAL_PATH = new RegExp('^/api/approvals/([0-9a-f-]{36})(?:/(approve|deny))?$')
@@ -150,9 +165,15 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const testEffects: Array<Record<string, unknown>> = []
     let runs: RunManager | undefined
     let inboxRef: InboxService | undefined
+    const fileRoots = [join(home, 'files'), ...(env.JUNOS_FILE_ROOTS ?? '').split(delimiter).filter(Boolean)]
+    mkdirSync(fileRoots[0]!, { recursive: true })
     const gateway = new Gateway({
       store: db,
-      tools: testToolsOn ? testTools(testEffects) : [],
+      tools: [
+        ...(testToolsOn ? testTools(testEffects) : []),
+        // The inbox does not exist yet (it needs the gateway); the tools only reach it when they run.
+        ...workflowTools({ inbox: { list: (f) => inboxRef!.list(f) }, fileRoots, now: options.now }),
+      ],
       now: options.now,
       approvalTtlMs: options.approvalTtlMs,
       autonomy: options.autonomy,
@@ -172,11 +193,12 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const adapters = [new ClaudeAdapter(env), new CodexAdapter(env)]
     let schedulerRef: Scheduler | undefined
     const chat = new ChatService({ store: db, runs: runMgr, adapters, cwd: chatCwd, now: options.now, providerClaimed: (p) => schedulerRef?.providerClaimed(p) ?? false })
+    const executor = makeTaskExecutor({ adapters, runs: runMgr, chat, cwd: chatCwd })
     const scheduler = new Scheduler({
       store: db,
       runs: runMgr,
       inbox,
-      execute: makeTaskExecutor({ adapters, runs: runMgr, chat, cwd: chatCwd }),
+      execute: executor,
       now: options.now,
       tickMs: options.schedulerTickMs,
       graceMs: options.schedulerGraceMs,
@@ -184,6 +206,28 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       leaseMs: options.schedulerLeaseMs,
     })
     schedulerRef = scheduler
+    const workflows = new WorkflowService({
+      store: db,
+      gateway,
+      inbox,
+      runs: runMgr,
+      execute: executor,
+      slot: { tryClaim: (p) => scheduler.tryClaimProvider(p), release: (p) => scheduler.releaseProvider(p) },
+      dir: join(home, 'workflows'),
+      checkChoice: (p, m, e) => chat.checkChoice(p, m, e),
+      now: options.now,
+      tickMs: options.workflowTickMs,
+      graceMs: options.workflowGraceMs,
+      slotWaitMs: options.workflowSlotWaitMs,
+      slotPollMs: options.workflowSlotPollMs,
+      ratePerHour: options.workflowRatePerHour,
+      globalPerHour: options.workflowGlobalPerHour,
+      maxDepth: options.workflowMaxDepth,
+    })
+    const workflowFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof WorkflowError) return sendJson(res, err.status, { error: err.code, message: err.message, errors: err.errors })
+      sendJson(res, 500, { error: 'workflow error' })
+    }
     const taskFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof TaskError) return sendJson(res, err.status, { error: err.code, message: err.message })
       sendJson(res, 500, { error: 'task error' })
@@ -392,6 +436,88 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           }
         } catch (err) {
           return taskFail(res, err)
+        }
+      }
+      if (req.method === 'GET' && url.pathname === '/api/workflows') {
+        return sendJson(res, 200, { workflows: workflows.list(), paused: runMgr.paused } satisfies WorkflowsResponse)
+      }
+      if (req.method === 'POST' && (url.pathname === '/api/workflows' || url.pathname === '/api/workflows/validate')) {
+        const validateOnly = url.pathname.endsWith('/validate')
+        readJson(req, 70_000).then(
+          (body) => {
+            try {
+              const yaml = (body as { yaml?: unknown } | null)?.yaml
+              if (typeof yaml !== 'string') throw new WorkflowError(400, 'bad_request', 'Send the workflow as { "yaml": "…" }.')
+              sendJson(res, validateOnly ? 200 : 201, validateOnly ? workflows.validate(yaml) : workflows.save(null, yaml))
+            } catch (err) {
+              workflowFail(res, err)
+            }
+          },
+          () => sendJson(res, 400, { error: 'bad request' }),
+        )
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/api/workflow-runs') {
+        return sendJson(res, 200, { runs: workflows.runs(url.searchParams.get('workflow') ?? undefined) } satisfies WorkflowRunsResponse)
+      }
+      const workflowRunPath = WORKFLOW_RUN_PATH.exec(url.pathname)
+      if (workflowRunPath) {
+        const [, runId, act] = workflowRunPath as unknown as [string, string, string | undefined]
+        if (req.method === 'GET' && !act) {
+          const found = workflows.getRun(runId)
+          return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: 'not found' })
+        }
+        if (req.method === 'POST' && act === 'cancel') {
+          workflows.cancel(runId).then(
+            (run) => sendJson(res, 200, run),
+            (err) => workflowFail(res, err),
+          )
+          return
+        }
+      }
+      const workflowPath = WORKFLOW_PATH.exec(url.pathname)
+      if (workflowPath) {
+        const [, workflowId, sub] = workflowPath as unknown as [string, string, string | undefined]
+        try {
+          if (req.method === 'GET' && !sub) {
+            const found = workflows.get(workflowId)
+            return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: 'not found' })
+          }
+          if (req.method === 'DELETE' && !sub) {
+            workflows.remove(workflowId)
+            return sendJson(res, 200, { deleted: true })
+          }
+          if (req.method === 'POST' && (sub === 'pause' || sub === 'resume')) return sendJson(res, 200, workflows.setPaused(workflowId, sub === 'pause', sub === 'pause' ? 'Paused by you.' : null))
+          if (req.method === 'PUT' && !sub) {
+            readJson(req, 70_000).then(
+              (body) => {
+                try {
+                  const yaml = (body as { yaml?: unknown } | null)?.yaml
+                  if (typeof yaml !== 'string') throw new WorkflowError(400, 'bad_request', 'Send the workflow as { "yaml": "…" }.')
+                  sendJson(res, 200, workflows.save(workflowId, yaml))
+                } catch (err) {
+                  workflowFail(res, err)
+                }
+              },
+              () => sendJson(res, 400, { error: 'bad request' }),
+            )
+            return
+          }
+          if (req.method === 'POST' && sub === 'run') {
+            readJson(req, 16_384).then(
+              (body) => {
+                try {
+                  sendJson(res, 202, workflows.start(workflowId, (body ?? {}) as WorkflowRunRequest, 'manual'))
+                } catch (err) {
+                  workflowFail(res, err)
+                }
+              },
+              () => sendJson(res, 400, { error: 'bad request' }),
+            )
+            return
+          }
+        } catch (err) {
+          return workflowFail(res, err)
         }
       }
       if (req.method === 'GET' && url.pathname === '/api/telegram/status') {
@@ -637,6 +763,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     await refreshProviders()
     telegram?.start()
     scheduler.start()
+    workflows.begin()
 
     let closing: Promise<void> | undefined
     return {
@@ -647,6 +774,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           clearInterval(sweeper)
           await telegram?.stop()
           await scheduler.stop()
+          await workflows.end()
           await runMgr.closeAll()
           for (const res of streams) res.end()
           await new Promise<void>((resolve) => {

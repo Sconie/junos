@@ -41,6 +41,13 @@ export interface BootOptions {
   schedulerGraceMs?: number
   schedulerBackoffMs?: number[]
   schedulerLeaseMs?: number
+  workflowTickMs?: number
+  workflowGraceMs?: number
+  workflowSlotWaitMs?: number
+  workflowSlotPollMs?: number
+  workflowRatePerHour?: number
+  workflowGlobalPerHour?: number
+  workflowMaxDepth?: number
 }
 
 export type TestDaemon = Daemon & {
@@ -71,6 +78,13 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     schedulerGraceMs: options.schedulerGraceMs,
     schedulerBackoffMs: options.schedulerBackoffMs,
     schedulerLeaseMs: options.schedulerLeaseMs,
+    workflowTickMs: options.workflowTickMs ?? 40,
+    workflowGraceMs: options.workflowGraceMs,
+    workflowSlotWaitMs: options.workflowSlotWaitMs,
+    workflowSlotPollMs: options.workflowSlotPollMs ?? 25,
+    workflowRatePerHour: options.workflowRatePerHour,
+    workflowGlobalPerHour: options.workflowGlobalPerHour,
+    workflowMaxDepth: options.workflowMaxDepth,
     onPairingCode: (c) => {
       announced = c
     },

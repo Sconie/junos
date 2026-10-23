@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@junos/shared": "*",
-    "croner": "^10.0.1"
+    "croner": "^10.0.1",
+    "yaml": "^2.9.1"
   }
 }
