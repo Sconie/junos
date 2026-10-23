@@ -313,3 +313,7 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .file-preview { width: 100%; min-height: 320px; border: 1px solid var(--border); border-radius: 8px; background: #15171a; }
 .snippet mark { background: color-mix(in srgb, var(--ok) 35%, transparent); color: inherit; }
 a.button { display: inline-block; padding: 3px 8px; font-size: 13px; border: 1px solid var(--border); border-radius: 8px; text-decoration: none; color: var(--text); }
+
+.terminal-bar { align-items: center; gap: 8px; margin-top: 12px; }
+.terminal-tab { display: inline-flex; align-items: center; gap: 2px; }
+.terminal-host { height: 460px; margin-top: 8px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: #15171a; }

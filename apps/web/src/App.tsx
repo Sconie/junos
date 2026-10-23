@@ -1,9 +1,12 @@
+import { Suspense, lazy } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import Overview from './pages/Overview'
 import Chat from './pages/Chat'
 import Schedules from './pages/Schedules'
 import Workflows from './pages/Workflows'
 import Board from './pages/Board'
+// The terminal brings xterm.js with it, so it loads only when opened.
+const Terminal = lazy(() => import('./pages/Terminal'))
 import Hermes from './pages/Hermes'
 import Files from './pages/Files'
 import Connections from './pages/Connections'
@@ -21,6 +24,7 @@ const nav = [
   { to: '/schedules', label: 'Scheduled', icon: '◷' },
   { to: '/board', label: 'Board', icon: '▥' },
   { to: '/workflows', label: 'Workflows', icon: '⇉' },
+  { to: '/terminal', label: 'Terminal', icon: '>_' },
   { to: '/hermes', label: 'Hermes', icon: '⚚' },
   { to: '/files', label: 'Files & projects', icon: '▤' },
   { to: '/connections', label: 'Connections', icon: '⛓' },
@@ -54,6 +58,14 @@ export default function App() {
           <Route path="/chat" element={<Chat />} />
           <Route path="/schedules" element={<Schedules />} />
           <Route path="/board" element={<Board />} />
+          <Route
+            path="/terminal"
+            element={
+              <Suspense fallback={<p className="muted">Loading…</p>}>
+                <Terminal />
+              </Suspense>
+            }
+          />
           <Route path="/workflows" element={<Workflows />} />
           <Route path="/hermes/*" element={<Hermes />} />
           <Route path="/files" element={<Files />} />

@@ -794,3 +794,35 @@ export interface AttachedFile {
   folderId: string
   path: string
 }
+
+// ---- Terminal (spec 15) ----
+
+export type TerminalKind = 'local' | 'vps' | 'agent'
+
+export interface TerminalSession {
+  id: string
+  kind: TerminalKind
+  label: string
+  status: 'open' | 'closed'
+  openedAt: string
+  /** The agent tab can be watched, never typed into. */
+  readOnly: boolean
+  closeReason: string | null
+}
+
+export interface TerminalOverview {
+  sessions: TerminalSession[]
+  local: { available: boolean; reason: string | null; shell: string }
+  /** The shell on the VPS goes through the Hermes shim; until that exists it is `none` or a `mock`. */
+  vps: { mode: 'none' | 'mock' | 'remote'; reason: string | null }
+}
+
+export type TerminalFrame = { type: 'data'; data: string } | { type: 'closed'; reason: string }
+
+export interface AgentExecRequest {
+  command: string
+  /** Who is asking: an agent, a workflow or Hermes. Never `jonas`. */
+  actor?: string
+  runId?: string
+  approvalId?: string
+}
