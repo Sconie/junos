@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CSRF_HEADER, type JunosEvent } from '@junos/shared'
+import type { HermesBridge } from '../src/hermes/bridge.ts'
 import { startDaemon, type Daemon } from '../src/server.ts'
 
 const fake = (name: string) => fileURLToPath(new URL(`./fakes/${name}.mjs`, import.meta.url))
@@ -41,6 +42,8 @@ export interface BootOptions {
   schedulerGraceMs?: number
   schedulerBackoffMs?: number[]
   schedulerLeaseMs?: number
+  hermes?: HermesBridge
+  hermesPollMs?: number
   workflowTickMs?: number
   workflowGraceMs?: number
   workflowSlotWaitMs?: number
@@ -78,6 +81,8 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     schedulerGraceMs: options.schedulerGraceMs,
     schedulerBackoffMs: options.schedulerBackoffMs,
     schedulerLeaseMs: options.schedulerLeaseMs,
+    hermes: options.hermes,
+    hermesPollMs: options.hermesPollMs ?? 100,
     workflowTickMs: options.workflowTickMs ?? 40,
     workflowGraceMs: options.workflowGraceMs,
     workflowSlotWaitMs: options.workflowSlotWaitMs,

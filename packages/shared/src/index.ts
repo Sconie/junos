@@ -528,3 +528,97 @@ export interface WorkflowsResponse {
 export interface WorkflowRunsResponse {
   runs: WorkflowRunRecord[]
 }
+
+// ---- Hermes (spec 06) ----
+
+export const HERMES_STATES = ['online', 'idle', 'working', 'paused', 'error', 'unreachable'] as const
+export type HermesState = (typeof HERMES_STATES)[number]
+
+/** `mock` is a scripted stand-in, `remote` the real agent behind its shim, `none` means nothing is connected. */
+export type HermesMode = 'mock' | 'remote' | 'none'
+
+export interface HermesStatus {
+  state: HermesState
+  currentTask: string | null
+  model: string
+  /** Seconds since the agent started, or null when unknown. */
+  uptimeS: number | null
+  /** Why it is unreachable or in error. */
+  reason: string | null
+}
+
+export const HERMES_STEP_TYPES = ['shell', 'browser', 'file', 'api', 'message'] as const
+export type HermesStepType = (typeof HERMES_STEP_TYPES)[number]
+export type HermesStepStatus = 'running' | 'done' | 'failed' | 'waiting_approval' | 'denied' | 'stopped'
+
+/** An action Hermes wants to take that needs a person's yes. */
+export interface HermesApprovalAsk {
+  class: Exclude<ActionClass, 'read'>
+  target: string
+  summary: string
+}
+
+export interface HermesStep {
+  id: string
+  directiveId: string | null
+  type: HermesStepType
+  summary: string
+  input: string
+  output: string
+  status: HermesStepStatus
+  ms: number | null
+  startedAt: string
+  /** Set while the step waits for an approval. */
+  approval?: HermesApprovalAsk
+  approvalId?: string | null
+}
+
+export interface HermesMessage {
+  id: string
+  role: 'user' | 'agent'
+  text: string
+  /** Where it was said. Telegram messages are mirrored with a badge. */
+  via: 'junos' | 'telegram'
+  directiveId: string | null
+  createdAt: string
+}
+
+export interface HermesMemoryItem {
+  id: string
+  text: string
+  pinned: boolean
+}
+
+export interface HermesSkill {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+}
+
+export interface HermesQueueItem {
+  id: string
+  text: string
+  priority: 'low' | 'normal' | 'high'
+  queuedAt: string
+}
+
+export interface HermesDirectiveRequest {
+  text: string
+  priority?: 'low' | 'normal' | 'high'
+  projectId?: string
+  /** Also echo the reply to Telegram. Off by default. */
+  echoToTelegram?: boolean
+}
+
+export interface HermesOverview {
+  mode: HermesMode
+  /** Why nothing is connected, when mode is `none`. */
+  reason: string | null
+  status: HermesStatus
+  steps: HermesStep[]
+  messages: HermesMessage[]
+  queue: HermesQueueItem[]
+  /** Set after a Stop whose result could not be confirmed. */
+  stopUnconfirmed: boolean
+}

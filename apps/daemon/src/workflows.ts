@@ -138,7 +138,7 @@ export class WorkflowService {
   }
 
   #ctx(): ValidateContext {
-    return { tools: new Set(this.#o.gateway.info().tools.filter((t) => !t.name.startsWith('test.')).map((t) => t.name)), checkChoice: this.#o.checkChoice }
+    return { tools: new Set(this.#o.gateway.info().tools.filter((t) => !t.name.startsWith('test.') && !t.name.startsWith('hermes.')).map((t) => t.name)), checkChoice: this.#o.checkChoice }
   }
 
   // ---- files ----
