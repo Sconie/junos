@@ -206,7 +206,13 @@ export class BackupService {
       this.#o.store.append('backup.finished', { backupId: id, status: 'ok', file: name, size }, id)
       this.#prune()
     } catch (err) {
-      for (const stray of [partial, `${partial}-wal`, `${partial}-shm`, `${partial}-journal`]) rmSync(stray, { force: true })
+      for (const stray of [partial, `${partial}-wal`, `${partial}-shm`, `${partial}-journal`]) {
+        try {
+          rmSync(stray, { force: true })
+        } catch {
+          /* the folder itself may be unusable (a file where it should be): the failure must still be recorded and reported below */
+        }
+      }
       const message = (err instanceof Error ? err.message : 'The backup failed.').split('\n')[0]!.slice(0, 300)
       db.prepare(`UPDATE backup_run SET status = 'failed', finished_at = ?, error = ? WHERE id = ?`).run(this.#iso(), message, id)
       this.#o.store.append('backup.finished', { backupId: id, status: 'failed', error: message }, id)

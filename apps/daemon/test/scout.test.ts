@@ -198,7 +198,7 @@ describe('reading a feed', () => {
   })
 
   it('refuses addresses on this machine or network unless told it is a test', async () => {
-    for (const bad of ['http://localhost/feed', 'http://127.0.0.1/feed', 'http://10.0.0.5/feed', 'http://192.168.1.1/x', 'http://169.254.169.254/latest', 'http://[::1]/x', 'http://100.109.251.72/x', 'ftp://example.com/feed', 'file:///etc/passwd', 'https://user:pw@example.com/feed', 'nonsense']) {
+    for (const bad of ['http://localhost/feed', 'http://127.0.0.1/feed', 'http://10.0.0.5/feed', 'http://192.168.1.1/x', 'http://169.254.169.254/latest', 'http://[::1]/x', 'http://[::ffff:127.0.0.1]/x', 'http://[::ffff:10.0.0.5]/x', 'http://100.109.251.72/x', 'ftp://example.com/feed', 'file:///etc/passwd', 'https://user:pw@example.com/feed', 'nonsense']) {
       await assert.rejects(checkFeedUrl(bad, false), FeedError, bad)
     }
     assert.equal((await checkFeedUrl('http://127.0.0.1:8080/x', true)).hostname, '127.0.0.1')
