@@ -194,3 +194,42 @@ describe('junosd with the shim', () => {
     assert.doesNotMatch(JSON.stringify(o), /not-the-right-key/)
   })
 })
+
+describe('a stream that goes quiet or falls behind', () => {
+  it('drops an event stream that stops delivering and opens a new one', async () => {
+    // A stand-in shim whose event stream says "ready" and then never speaks again, like a half-open tunnel.
+    const { createServer } = await import('node:http')
+    let opened = 0
+    const server = createServer((req, res) => {
+      if (req.url === '/shim/health') return void res.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true,"name":"junos-hermes-shim","protocol":1}')
+      if (req.url?.startsWith('/v1/events')) {
+        opened += 1
+        res.writeHead(200, { 'content-type': 'text/event-stream' })
+        return void res.write('event: ready\ndata: {}\n\n')
+      }
+      res.writeHead(404).end()
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    cleanups.push(() => new Promise<void>((r) => (server.closeAllConnections(), server.close(() => r()))))
+    const port = (server.address() as import('node:net').AddressInfo).port
+    const b = new ShimHermes({ baseUrl: `http://127.0.0.1:${port}`, apiKey: KEY, reconnectMs: 20, idleMs: 150 })
+    cleanups.push(() => b.close())
+    b.subscribe(() => {})
+    await until(() => opened >= 3, 5000, 'the stream to be opened again after going quiet')
+  })
+
+  it('learns how a directive ended while it was not listening', async () => {
+    const r = await shim({ deps: { ringSize: 4 } })
+    // Two directives finish before the bridge ever connects, and the ring is too small to replay them.
+    for (const text of ['first', 'second']) {
+      await r.call('/v1/directives', { body: { text } })
+      await until(async () => (await r.json<{ directives: unknown[] }>('/v1/recent')).directives.length === (text === 'first' ? 1 : 2))
+    }
+    const { directives } = await r.json<{ directives: Array<{ directiveId: string }> }>('/v1/recent')
+    const b = bridge(r)
+    const updates: BridgeUpdate[] = []
+    b.subscribe((u) => updates.push(u))
+    await until(() => updates.filter((u) => u.type === 'directive').length === 2, 5000, 'both outcomes')
+    assert.deepEqual(updates.filter((u) => u.type === 'directive').map((u) => (u as { directiveId: string }).directiveId).sort(), directives.map((d) => d.directiveId).sort())
+  })
+})
