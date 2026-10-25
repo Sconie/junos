@@ -53,6 +53,8 @@ export class ShimEngine {
   readonly #waiting = new Map<string, Waiting>()
   readonly #steps: HermesStep[] = []
   readonly #messages: HermesMessage[] = []
+  /** How the last directives ended, so a junosd that missed the event (a restart, a gap) still learns it. */
+  readonly #finished: Array<{ directiveId: string; outcome: 'done' | 'failed' | 'stopped'; summary: string }> = []
   #queue: Array<HermesQueueItem & { directiveId: string; echo: boolean }> = []
   #seq = 0
   #paused = false
@@ -142,8 +144,8 @@ export class ShimEngine {
     this.#emit({ type: 'kanban', action })
   }
 
-  recent(): { steps: HermesStep[]; messages: HermesMessage[] } {
-    return { steps: this.#steps.map((s) => ({ ...s })), messages: this.#messages.map((m) => ({ ...m })) }
+  recent(): { steps: HermesStep[]; messages: HermesMessage[]; directives: Array<{ directiveId: string; outcome: 'done' | 'failed' | 'stopped'; summary: string }> } {
+    return { steps: this.#steps.map((s) => ({ ...s })), messages: this.#messages.map((m) => ({ ...m })), directives: this.#finished.map((d) => ({ ...d })) }
   }
 
   // ---- directives ----
@@ -232,6 +234,8 @@ export class ShimEngine {
     const shown = outcome === 'stopped' ? 'Stopped.' : outcome === 'failed' ? `That failed: ${reply}` : reply
     this.#message('agent', shown, 'junos', directiveId)
     this.#current = null
+    this.#finished.push({ directiveId, outcome, summary: clip(shown, 4000) })
+    if (this.#finished.length > 100) this.#finished.shift()
     this.#emit({ type: 'directive', directiveId, outcome, summary: clip(shown, 4000) })
     this.#publishStatus()
     if (!this.#paused && !this.#closed) this.#next()
