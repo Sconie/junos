@@ -74,7 +74,18 @@ function privateAddress(address: string): boolean {
     return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)
   }
   const v6 = address.toLowerCase()
-  if (v6.startsWith('::ffff:')) return privateAddress(v6.slice(7))
+  if (v6.startsWith('::ffff:')) {
+    const rest = v6.slice(7)
+    if (isIP(rest) === 4) return privateAddress(rest)
+    // `new URL` writes a mapped address in hex (::ffff:7f00:1), so the dotted form is rebuilt from the two groups.
+    const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(rest)
+    if (hex) {
+      const hi = parseInt(hex[1]!, 16)
+      const lo = parseInt(hex[2]!, 16)
+      return privateAddress(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`)
+    }
+    return true
+  }
   return v6 === '::1' || v6 === '::' || v6.startsWith('fc') || v6.startsWith('fd') || v6.startsWith('fe8') || v6.startsWith('fe9') || v6.startsWith('fea') || v6.startsWith('feb')
 }
 

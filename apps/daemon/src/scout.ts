@@ -513,6 +513,7 @@ export class ScoutService {
     // 2. Filter: a cheap pass that drops what is plainly irrelevant.
     const filterReply = await this.#ask(settings.provider, 'low', this.#filterPrompt(batch, sourceName), say)
     calls += 1
+    this.#countCalls(runId, calls)
     const keepIds = jsonArray(filterReply)
     if (!keepIds) {
       say('The filter reply was not a list.')
@@ -527,6 +528,7 @@ export class ScoutService {
     // 3. Assess: a stronger pass that scores what is left. Tools are off, and the web text is data.
     const assessReply = await this.#ask(settings.provider, 'medium', this.#assessPrompt(kept, sourceName), say)
     calls += 1
+    this.#countCalls(runId, calls)
     const assessments = this.#parseAssessments(assessReply, kept.length)
     if (assessments.length === 0) {
       say('The assessment reply had nothing usable.')
@@ -558,6 +560,11 @@ export class ScoutService {
     }
     say(`Published ${published} finding${published === 1 ? '' : 's'}.`)
     return this.#finish(runId, 'succeeded', { sources: sources.length, items: fresh.length, kept: kept.length, findings: published, model_calls: calls }, log)
+  }
+
+  /** Saved as it happens, so a run that fails after its first call still counts against the daily budget. */
+  #countCalls(runId: string, calls: number): void {
+    this.#o.store.db.prepare('UPDATE scout_run SET model_calls = ? WHERE id = ?').run(calls, runId)
   }
 
   /** One model call with tools off, in an empty directory (the shared executor), taking the provider's single slot. */
