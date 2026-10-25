@@ -251,6 +251,22 @@ describe('a backup that does not pass', () => {
   })
 })
 
+describe('a backup interrupted by a crash', () => {
+  it('is closed as failed when junosd starts, not left showing as running', async () => {
+    const tmp = tempHome()
+    cleanups.push(tmp.cleanup)
+    const first = await daemon({ home: tmp.home, backupAuto: false })
+    await first.close()
+    const db = new DatabaseSync(join(tmp.home, 'junos.db'))
+    db.prepare(`INSERT INTO backup_run (id, started_at, status, trigger) VALUES ('stale', ?, 'running', 'schedule')`).run(new Date().toISOString())
+    db.close()
+    const c = await daemon({ home: tmp.home, backupAuto: false })
+    const row = (await c.list()).backups.find((b) => b.id === 'stale')!
+    assert.equal(row.status, 'failed')
+    assert.match(row.error!, /stopped while this backup was running/)
+  })
+})
+
 describe('keeping some, not all', () => {
   it('keeps the newest verified backups and deletes the rest, and says so', async () => {
     const clock = { now: Date.parse('2026-10-20T10:00:00Z') }

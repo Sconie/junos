@@ -110,6 +110,7 @@ export class BackupService {
   start(): void {
     if (this.#timer) return
     this.#cleanPartials()
+    this.#closeInterrupted()
     if (this.#o.auto === false) return
     this.#timer = setInterval(() => this.tick(), this.#o.tickMs ?? 10 * 60_000)
     this.#timer.unref()
@@ -132,6 +133,16 @@ export class BackupService {
       for (const f of readdirSync(this.#o.dir)) if (f.includes('.partial')) rmSync(join(this.#o.dir, f), { force: true })
     } catch {
       /* no folder yet */
+    }
+  }
+
+  /** A backup that was running when junosd died never finishes. Its row is closed as failed so the screen does not show it as in progress. */
+  #closeInterrupted(): void {
+    const db = this.#o.store.db
+    const rows = db.prepare(`SELECT id FROM backup_run WHERE status = 'running'`).all() as Array<{ id: string }>
+    for (const r of rows) {
+      db.prepare(`UPDATE backup_run SET status = 'failed', finished_at = ?, error = ? WHERE id = ? AND status = 'running'`).run(this.#iso(), 'junosd stopped while this backup was running.', r.id)
+      this.#o.store.append('backup.finished', { backupId: r.id, status: 'failed', error: 'interrupted' }, r.id)
     }
   }
 
@@ -204,7 +215,6 @@ export class BackupService {
       const size = statSync(final).size
       db.prepare(`UPDATE backup_run SET status = 'ok', finished_at = ?, file = ?, size = ?, verified = 1 WHERE id = ?`).run(this.#iso(), name, size, id)
       this.#o.store.append('backup.finished', { backupId: id, status: 'ok', file: name, size }, id)
-      this.#prune()
     } catch (err) {
       for (const stray of [partial, `${partial}-wal`, `${partial}-shm`, `${partial}-journal`]) {
         try {
@@ -226,7 +236,16 @@ export class BackupService {
         refId: `backup:${id}`,
       })
     }
-    return this.#record(db.prepare('SELECT * FROM backup_run WHERE id = ?').get(id) as unknown as Row)
+    const record = this.#record(db.prepare('SELECT * FROM backup_run WHERE id = ?').get(id) as unknown as Row)
+    if (record.status === 'ok') {
+      try {
+        // Tidying old copies is separate from taking this one: a locked old file must not turn a good backup into a failed one.
+        this.#prune()
+      } catch {
+        /* the next backup tries again */
+      }
+    }
+    return record
   }
 
   /** Keeps the newest verified backups and deletes the rest. A failed or running row never counts as one to keep. */
