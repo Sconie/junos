@@ -12,6 +12,8 @@ export interface ShimHermesOptions {
   timeoutMs?: number
   /** First wait before the event stream reconnects (default 1 s, doubling to 15 s). */
   reconnectMs?: number
+  /** How long the event stream may stay silent before it is dropped and opened again (default 15 s; the shim beats every 5 s). */
+  idleMs?: number
 }
 
 /** The wire version this daemon speaks. A shim reporting another is refused with a clear message. */
@@ -28,6 +30,7 @@ export class ShimHermes implements HermesBridge {
   readonly #key: string | undefined
   readonly #timeoutMs: number
   readonly #reconnectMs: number
+  readonly #idleMs: number
   readonly #listeners = new Set<(u: BridgeUpdate) => void>()
   #abort: AbortController | null = null
   #lastSeq = 0
@@ -48,6 +51,7 @@ export class ShimHermes implements HermesBridge {
     this.#key = options.apiKey || undefined
     this.#timeoutMs = options.timeoutMs ?? 8000
     this.#reconnectMs = options.reconnectMs ?? 1000
+    this.#idleMs = options.idleMs ?? 15_000
   }
 
   #headers(json = false): Record<string, string> {
@@ -171,7 +175,7 @@ export class ShimHermes implements HermesBridge {
         const res = await fetch(new URL(`/v1/events?lastEventId=${this.#lastSeq}`, this.#base), { headers: { ...this.#headers(), accept: 'text/event-stream' }, signal: abort.signal })
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
         wait = this.#reconnectMs
-        await this.#read(res.body)
+        await this.#read(res.body, abort)
       } catch {
         /* the status poll reports the reason; here we only try again */
       }
@@ -182,12 +186,27 @@ export class ShimHermes implements HermesBridge {
     }
   }
 
-  async #read(body: ReadableStream<Uint8Array>): Promise<void> {
+  async #read(body: ReadableStream<Uint8Array>, abort: AbortController): Promise<void> {
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     for (;;) {
-      const { done, value } = await reader.read()
+      // A tunnel that went half-open stops delivering without ever closing. The shim beats every few seconds, so
+      // silence for longer than that means the stream is dead: drop it, and the loop above opens a new one.
+      let idle: ReturnType<typeof setTimeout> | undefined
+      const silent = new Promise<never>((_, reject) => {
+        idle = setTimeout(() => {
+          abort.abort()
+          reject(new Error('the event stream went quiet'))
+        }, this.#idleMs)
+      })
+      let chunk: { done: boolean; value?: Uint8Array }
+      try {
+        chunk = await Promise.race([reader.read(), silent])
+      } finally {
+        clearTimeout(idle)
+      }
+      const { done, value } = chunk
       if (done) return
       buffer += decoder.decode(value, { stream: true })
       let at
@@ -213,9 +232,11 @@ export class ShimHermes implements HermesBridge {
       try {
         const info = JSON.parse(data.join('\n')) as { lastSeq?: number }
         if (typeof info.lastSeq === 'number') this.#lastSeq = info.lastSeq
-        const recent = await this.recent()
-        for (const message of recent.messages) this.#emit({ type: 'message', message })
-        for (const step of recent.steps) this.#emit({ type: 'step', step })
+        const recent = await this.#shim<{ steps?: HermesStep[]; messages?: HermesMessage[]; directives?: Array<{ directiveId: string; outcome: 'done' | 'failed' | 'stopped'; summary: string }> }>('GET', '/v1/recent')
+        for (const message of recent.messages ?? []) this.#emit({ type: 'message', message })
+        for (const step of recent.steps ?? []) this.#emit({ type: 'step', step })
+        // How directives ended in the gap: without these a board card whose work finished meanwhile would stay open.
+        for (const d of recent.directives ?? []) this.#emit({ type: 'directive', ...d })
       } catch {
         /* the next poll catches up */
       }

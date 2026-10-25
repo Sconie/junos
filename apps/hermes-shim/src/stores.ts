@@ -85,7 +85,9 @@ export class MemoryStore {
       if (!text) throw new ShimError(400, 'bad_request', 'A memory item cannot be empty.')
       const known = typeof item.id === 'string' ? byId.get(item.id) : undefined
       if (known) {
-        incoming.set(known.id, { id: known.id, text, pinned: item.pinned === true })
+        // An edited note of our own gets a new id (it is made from the text), and its pin has to move with it.
+        const id = known.file === OWN_NOTES ? idFor(OWN_NOTES, text) : known.id
+        incoming.set(id, { id, text, pinned: item.pinned === true })
         if (known.file === OWN_NOTES) own.push(text)
         else if (text !== known.text) throw new ShimError(400, 'bad_request', 'Hermes wrote this memory. Ask Hermes to change it; JunOS can pin it but not edit it.')
       } else {

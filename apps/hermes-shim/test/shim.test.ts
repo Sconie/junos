@@ -409,6 +409,15 @@ describe('memory', () => {
     await put(r, (await get(r)).filter((i) => i.text !== 'Edited note'))
     assert.ok(!(await get(r)).some((i) => i.text === 'Edited note'))
   })
+  it('keeps a pin on a note of its own when the note is edited', async () => {
+    const r = await rig()
+    await put(r, [{ id: 'n1', text: 'First wording', pinned: true }])
+    let items = await get(r)
+    assert.deepEqual(items.map((i) => [i.text, i.pinned]), [['First wording', true]])
+    await put(r, [{ ...items[0]!, text: 'Second wording' }])
+    items = await get(r)
+    assert.deepEqual(items.map((i) => [i.text, i.pinned]), [['Second wording', true]], 'the pin moved with the edited note')
+  })
   it('refuses to rewrite or drop a fact Hermes wrote', async () => {
     const r = await rig()
     mkdirSync(r.memoryDir, { recursive: true })
@@ -496,5 +505,18 @@ describe('mirroring Telegram', () => {
     await until(() => events.updates().some((u) => u.type === 'message' && u.message.text === 'after rotation'))
     const mirrored = events.updates().filter((u): u is Extract<ShimUpdate, { type: 'message' }> => u.type === 'message').map((u) => u.message)
     assert.ok(mirrored.every((m) => m.via === 'telegram'))
+  })
+})
+
+describe('how directives ended', () => {
+  it('keeps the outcome of recent directives, so a junosd that missed the event can still learn it', async () => {
+    const r = await rig()
+    r.hermes.mode = 'plain'
+    const first = (await (await directive(r, { text: 'one' })).json()) as { directiveId: string }
+    await until(async () => (await r.json<{ directives: unknown[] }>('/v1/recent')).directives.length === 1)
+    const second = (await (await directive(r, { text: 'two' })).json()) as { directiveId: string }
+    await until(async () => (await r.json<{ directives: unknown[] }>('/v1/recent')).directives.length === 2)
+    const { directives } = await r.json<{ directives: Array<{ directiveId: string; outcome: string; summary: string }> }>('/v1/recent')
+    assert.deepEqual(directives.map((d) => [d.directiveId, d.outcome, d.summary]), [[first.directiveId, 'done', 'You said: one'], [second.directiveId, 'done', 'You said: two']])
   })
 })
