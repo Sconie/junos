@@ -1,5 +1,5 @@
-import { Suspense, lazy } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { Suspense, lazy, useEffect, useState } from 'react'
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import Home from './pages/Home'
 import CommandPalette from './components/CommandPalette'
 import Chat from './pages/Chat'
@@ -35,19 +35,37 @@ const nav = [
   { to: '/backups', label: 'Backups', icon: '⤓' },
 ]
 
+/** The four screens kept in the bar at the bottom of a phone; the rest open from "More". */
+const PRIMARY = new Set(['/', '/inbox', '/chat', '/board'])
+
 export default function App() {
+  // Only used at phone width, where the sidebar becomes a bottom bar and a sheet for the other screens.
+  // The sheet belongs to the screen it was opened on, so choosing another screen closes it without an effect.
+  const [openAt, setOpenAt] = useState<string | null>(null)
+  const { pathname } = useLocation()
+  const more = openAt === pathname
+  useEffect(() => {
+    if (!more) return
+    const close = (e: KeyboardEvent) => e.key === 'Escape' && setOpenAt(null)
+    window.addEventListener('keydown', close)
+    return () => window.removeEventListener('keydown', close)
+  }, [more])
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className="sidebar" id="phone-sheet" data-more={more}>
         <div className="brand">JunOS</div>
         <nav>
           {nav.map((item) => (
-            <NavLink key={item.to} to={item.to} end={item.to === '/'} className="nav-link">
+            <NavLink key={item.to} to={item.to} end={item.to === '/'} className={PRIMARY.has(item.to) ? 'nav-link' : 'nav-link nav-secondary'}>
               <span className="nav-icon">{item.icon}</span>
               {item.label}
               {item.to === '/inbox' && <InboxBadge />}
             </NavLink>
           ))}
+          <button type="button" className="nav-link nav-more" aria-expanded={more} aria-controls="phone-sheet" onClick={() => setOpenAt(more ? null : pathname)}>
+            <span className="nav-icon">{more ? '✕' : '⋯'}</span>
+            {more ? 'Close' : 'More'}
+          </button>
         </nav>
         <DaemonStatus />
       </aside>

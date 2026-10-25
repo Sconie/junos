@@ -233,7 +233,7 @@ export default function CommandPalette() {
   return (
     <>
       <button type="button" className="palette-open" onClick={() => setOpen(true)} aria-label="Open the command palette">
-        Search {mac ? '⌘K' : 'Ctrl K'}
+        Search <span className="palette-hint">{mac ? '⌘K' : 'Ctrl K'}</span>
       </button>
       {toast && (
         <p className="palette-toast" role="status">

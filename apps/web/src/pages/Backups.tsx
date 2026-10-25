@@ -87,7 +87,7 @@ export default function Backups() {
         </span>
       </div>
 
-      <table className="table">
+      <table className="table stack">
         <thead>
           <tr>
             <th>When</th>
@@ -107,13 +107,13 @@ export default function Backups() {
           )}
           {data.backups.map((b) => (
             <tr key={b.id} data-status={b.status}>
-              <td>{when(b.startedAt)}</td>
-              <td>
+              <td data-label="When">{when(b.startedAt)}</td>
+              <td data-label="Result">
                 {b.status === 'ok' ? (b.present ? 'Verified' : 'Verified, since deleted') : b.status === 'failed' ? <span className="bad">Failed: {b.error}</span> : 'Running'}
               </td>
-              <td>{b.present ? <code>{b.file}</code> : '—'}</td>
-              <td>{size(b.size)}</td>
-              <td>{b.trigger === 'manual' ? 'By hand' : 'Nightly'}</td>
+              <td data-label="File">{b.present ? <code>{b.file}</code> : '—'}</td>
+              <td data-label="Size">{size(b.size)}</td>
+              <td data-label="How">{b.trigger === 'manual' ? 'By hand' : 'Nightly'}</td>
             </tr>
           ))}
         </tbody>
