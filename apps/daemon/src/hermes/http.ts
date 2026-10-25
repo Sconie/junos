@@ -46,6 +46,8 @@ export class HttpHermes implements HermesBridge {
   #model = ''
   /** Whether the last health check passed, so a state change can be published at once without another round trip. */
   #healthy = false
+  /** Learned once: Hermes answers /health only with the key (set when the open check was refused). */
+  #healthNeedsKey = false
   #steps: HermesStep[] = []
   #messages: HermesMessage[] = []
 
@@ -85,7 +87,7 @@ export class HttpHermes implements HermesBridge {
   async status(): Promise<HermesStatus> {
     let health: Response
     try {
-      health = await fetch(new URL('/health', this.#base), { signal: AbortSignal.timeout(this.#statusTimeoutMs) })
+      health = await this.#health()
     } catch {
       this.#healthy = false
       return { state: 'unreachable', currentTask: null, model: this.#model, uptimeS: null, reason: 'Hermes did not answer. Is the tunnel or Tailscale up?' }
@@ -95,6 +97,19 @@ export class HttpHermes implements HermesBridge {
     // "degraded" (an unconfigured chat service, say) does not stop it answering, so it is not an error.
     if (!this.#model && this.#key) await this.#readModel()
     return { state: this.#state(), currentTask: this.#current?.text ?? null, model: this.#model, uptimeS: Math.max(0, Math.round((this.#now() - this.#started) / 1000)), reason: null }
+  }
+
+  /** The open health check first; if Hermes refuses it (some configurations guard /health too), once more with the key. */
+  async #health(): Promise<Response> {
+    const get = (withKey: boolean) => fetch(new URL('/health', this.#base), { headers: withKey ? this.#headers() : {}, signal: AbortSignal.timeout(this.#statusTimeoutMs) })
+    if (this.#healthNeedsKey && this.#key) return get(true)
+    const open = await get(false)
+    if ((open.status === 401 || open.status === 403) && this.#key) {
+      const keyed = await get(true)
+      if (keyed.ok) this.#healthNeedsKey = true
+      return keyed
+    }
+    return open
   }
 
   async #readModel(): Promise<void> {

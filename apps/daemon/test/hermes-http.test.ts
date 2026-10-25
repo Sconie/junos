@@ -28,12 +28,14 @@ interface Fake {
   seen: Array<{ method: string; path: string; auth: string | undefined; body: string }>
   mode: 'ok' | 'slow' | 'down' | 'bad-key-reply' | 'empty'
   health: string
+  /** When true, /health also needs the key (some configurations guard it). */
+  guardHealth: boolean
   close(): Promise<void>
 }
 
 /** A stand-in for Hermes's OpenAI-style gateway: /health open, /v1/models and /v1/chat/completions behind a bearer key. */
 async function fakeHermes(): Promise<Fake> {
-  const state: Fake = { url: '', seen: [], mode: 'ok', health: 'ok', close: async () => {} }
+  const state: Fake = { url: '', seen: [], mode: 'ok', health: 'ok', guardHealth: false, close: async () => {} }
   const read = (req: IncomingMessage) =>
     new Promise<string>((resolve) => {
       let body = ''
@@ -43,6 +45,7 @@ async function fakeHermes(): Promise<Fake> {
   const server: Server = createServer(async (req, res) => {
     const body = await read(req)
     state.seen.push({ method: req.method ?? '', path: req.url ?? '', auth: req.headers.authorization, body })
+    if (req.url === '/health' && state.guardHealth && req.headers.authorization !== `Bearer ${KEY}`) return void res.writeHead(401).end('{"error":"key"}')
     if (req.url === '/health') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ status: state.health, version: '0.22.2' }))
     if (req.headers.authorization !== `Bearer ${KEY}`) return void res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'invalid key' }))
     if (req.url === '/v1/models') return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ data: [{ id: 'hermes-agent' }] }))
@@ -104,6 +107,26 @@ describe('Hermes over its API', () => {
     assert.deepEqual([o.mode, o.status.state, o.status.model, o.status.reason], ['remote', 'idle', 'hermes-agent', null])
     assert.ok(fake.seen.some((s) => s.path === '/health' && s.auth === undefined), 'the health check carries no key')
     assert.ok(fake.seen.some((s) => s.path === '/v1/models' && s.auth === `Bearer ${KEY}`))
+  })
+
+  it('retries /health once with the key when Hermes refuses it open, and goes straight to the key afterwards', async () => {
+    const fake = await fakeHermes()
+    fake.guardHealth = true
+    const { b } = await daemon({ JUNOS_HERMES_URL: fake.url, JUNOS_HERMES_KEY: KEY })
+    await until(async () => (await overview(b)).status.model === 'hermes-agent', 5000, 'the model name')
+    const o = await overview(b)
+    assert.deepEqual([o.status.state, o.status.reason], ['idle', null])
+    const calls = fake.seen.filter((s) => s.path === '/health').map((s) => s.auth)
+    assert.deepEqual(calls.slice(0, 2), [undefined, `Bearer ${KEY}`])
+    assert.ok(calls.slice(2).every((a) => a === `Bearer ${KEY}`), 'later checks send the key at once')
+  })
+
+  it('does not retry /health with a key it was never given', async () => {
+    const fake = await fakeHermes()
+    fake.guardHealth = true
+    const { b } = await daemon({ JUNOS_HERMES_URL: fake.url })
+    await until(async () => (await overview(b)).status.state === 'error', 5000, 'the error')
+    assert.ok(fake.seen.filter((s) => s.path === '/health').every((s) => s.auth === undefined))
   })
 
   it('asks Hermes a directive and shows its streamed answer as a message, with the key only on the call that needs it', async () => {
