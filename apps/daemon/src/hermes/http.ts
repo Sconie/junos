@@ -44,6 +44,8 @@ export class HttpHermes implements HermesBridge {
   #paused = false
   #current: { directiveId: string; text: string; abort: AbortController } | null = null
   #model = ''
+  /** Whether the last health check passed, so a state change can be published at once without another round trip. */
+  #healthy = false
   #steps: HermesStep[] = []
   #messages: HermesMessage[] = []
 
@@ -85,8 +87,10 @@ export class HttpHermes implements HermesBridge {
     try {
       health = await fetch(new URL('/health', this.#base), { signal: AbortSignal.timeout(this.#statusTimeoutMs) })
     } catch {
+      this.#healthy = false
       return { state: 'unreachable', currentTask: null, model: this.#model, uptimeS: null, reason: 'Hermes did not answer. Is the tunnel or Tailscale up?' }
     }
+    this.#healthy = health.ok
     if (!health.ok) return { state: 'error', currentTask: null, model: this.#model, uptimeS: null, reason: `Hermes answered HTTP ${health.status}.` }
     // "degraded" (an unconfigured chat service, say) does not stop it answering, so it is not an error.
     if (!this.#model && this.#key) await this.#readModel()
@@ -121,6 +125,11 @@ export class HttpHermes implements HermesBridge {
   }
 
   #publishState(): void {
+    // A change of state (working, idle, paused) is known here and now; waiting on a health check first would leave the screen a beat behind.
+    if (this.#healthy) {
+      this.#emit({ type: 'status', status: { state: this.#state(), currentTask: this.#current?.text ?? null, model: this.#model, uptimeS: Math.max(0, Math.round((this.#now() - this.#started) / 1000)), reason: null } })
+      return
+    }
     this.status().then(
       (s) => this.#emit({ type: 'status', status: s }),
       () => {},
