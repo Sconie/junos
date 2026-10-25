@@ -248,6 +248,9 @@ export class HttpHermes implements HermesBridge {
     return { steps: this.#steps.map((s) => ({ ...s })), messages: this.#messages.map((m) => ({ ...m })) }
   }
   async close(): Promise<void> {
+    // Nothing queued may start once the bridge is closing: the aborted directive would otherwise hand on to the next one.
+    this.#queue = []
+    this.#paused = true
     this.#current?.abort.abort()
     this.#listeners.clear()
   }
