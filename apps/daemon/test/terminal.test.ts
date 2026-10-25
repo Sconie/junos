@@ -178,7 +178,8 @@ describe('your own tabs', { skip: !havePty && 'node-pty could not be loaded here
     await b.request(`/api/terminal/sessions/${tab.id}`, { method: 'DELETE' })
     const closed = d.store.since(0).find((e) => e.type === 'terminal.closed')!
     const tail = String(closed.payload.tail)
-    assert.match(tail, /echo:my key is \[redacted\]/)
+    // ConPTY can redraw the line, so only the redaction is asserted, not the shell's exact wording.
+    assert.match(tail, /my key is \[redacted\]/)
     assert.doesNotMatch(tail, /sk-aaaa/)
     out.stop()
   })
