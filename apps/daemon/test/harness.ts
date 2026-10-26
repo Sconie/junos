@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { CSRF_HEADER, type JunosEvent } from '@junos/shared'
 import type { HermesBridge } from '../src/hermes/bridge.ts'
+import type { AgentShell, LocalShell, ShellOpener } from '../src/terminal.ts'
 import { startDaemon, type Daemon } from '../src/server.ts'
 
 const fake = (name: string) => fileURLToPath(new URL(`./fakes/${name}.mjs`, import.meta.url))
@@ -48,6 +49,15 @@ export interface BootOptions {
   kanbanLeaseMs?: number
   filesRescanMs?: number
   filesMaxFiles?: number
+  scoutTickMs?: number
+  scoutAllowLocal?: boolean
+  scoutSlotWaitMs?: number
+  scoutFetchTimeoutMs?: number
+  terminalShell?: LocalShell
+  terminalAgentShell?: AgentShell
+  terminalVps?: ShellOpener
+  terminalVpsIdleMs?: number
+  terminalAgentTimeoutMs?: number
   workflowTickMs?: number
   workflowGraceMs?: number
   workflowSlotWaitMs?: number
@@ -91,6 +101,15 @@ export async function boot(home: string, options: BootOptions = {}): Promise<Tes
     kanbanLeaseMs: options.kanbanLeaseMs,
     filesRescanMs: options.filesRescanMs ?? 3_600_000,
     filesMaxFiles: options.filesMaxFiles,
+    scoutTickMs: options.scoutTickMs ?? 3_600_000,
+    scoutAllowLocal: options.scoutAllowLocal ?? true,
+    scoutSlotWaitMs: options.scoutSlotWaitMs,
+    scoutFetchTimeoutMs: options.scoutFetchTimeoutMs,
+    terminalShell: options.terminalShell,
+    terminalAgentShell: options.terminalAgentShell,
+    terminalVps: options.terminalVps,
+    terminalVpsIdleMs: options.terminalVpsIdleMs,
+    terminalAgentTimeoutMs: options.terminalAgentTimeoutMs,
     workflowTickMs: options.workflowTickMs ?? 40,
     workflowGraceMs: options.workflowGraceMs,
     workflowSlotWaitMs: options.workflowSlotWaitMs,

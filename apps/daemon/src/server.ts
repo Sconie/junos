@@ -50,6 +50,9 @@ import { workflowTools } from './workflow-tools.ts'
 import { HermesError, HermesService, hermesTools } from './hermes.ts'
 import { KanbanError, KanbanService } from './kanban.ts'
 import { FilesError, FilesService } from './files.ts'
+import { ScoutError, ScoutService } from './scout.ts'
+import { HomeService, searchEverything } from './home.ts'
+import { MockVpsShell, TerminalError, TerminalService, terminalTools, type AgentShell, type LocalShell, type ShellOpener } from './terminal.ts'
 import { NoHermes, type HermesBridge } from './hermes/bridge.ts'
 import { MockHermes } from './hermes/mock.ts'
 import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
@@ -94,6 +97,17 @@ export interface DaemonOptions {
   kanbanTickMs?: number
   /** Index timing and size (tests make them small). */
   filesRescanMs?: number
+  /** Scout timing; `scoutAllowLocal` lets a feed on this machine be a source (tests only). */
+  scoutTickMs?: number
+  scoutAllowLocal?: boolean
+  scoutSlotWaitMs?: number
+  scoutFetchTimeoutMs?: number
+  /** Terminal settings (tests replace the shells with scripted ones). */
+  terminalShell?: LocalShell
+  terminalAgentShell?: AgentShell
+  terminalVps?: ShellOpener
+  terminalVpsIdleMs?: number
+  terminalAgentTimeoutMs?: number
   filesMaxFiles?: number
   kanbanLeaseMs?: number
   /** Workflow timing and loop-guard limits (tests make them small). */
@@ -181,6 +195,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     let runs: RunManager | undefined
     let inboxRef: InboxService | undefined
     let hermesRef: HermesService | undefined
+    let terminalRef: TerminalService | undefined
     const fileRoots = [join(home, 'files'), ...(env.JUNOS_FILE_ROOTS ?? '').split(delimiter).filter(Boolean)]
     mkdirSync(fileRoots[0]!, { recursive: true })
     const gateway = new Gateway({
@@ -190,6 +205,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         // The inbox does not exist yet (it needs the gateway); the tools only reach it when they run.
         ...workflowTools({ inbox: { list: (f) => inboxRef!.list(f) }, fileRoots, now: options.now }),
         ...hermesTools(() => hermesRef),
+        ...terminalTools(() => terminalRef),
       ],
       now: options.now,
       approvalTtlMs: options.approvalTtlMs,
@@ -209,6 +225,22 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       : null
     const adapters = [new ClaudeAdapter(env), new CodexAdapter(env)]
     let schedulerRef: Scheduler | undefined
+    const terminal = new TerminalService({
+      store: db,
+      gateway,
+      env,
+      now: options.now,
+      shell: options.terminalShell,
+      agentShell: options.terminalAgentShell,
+      vps: options.terminalVps ?? (env.JUNOS_TERMINAL_VPS === 'mock' ? new MockVpsShell() : undefined),
+      vpsIdleMs: options.terminalVpsIdleMs,
+      agentTimeoutMs: options.terminalAgentTimeoutMs,
+    })
+    terminalRef = terminal
+    const terminalFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof TerminalError) return sendJson(res, err.status, { error: err.code, message: err.message })
+      sendJson(res, 500, { error: 'terminal error' })
+    }
     const files = new FilesService({ store: db, dataHome: home, now: options.now, rescanMs: options.filesRescanMs, maxFiles: options.filesMaxFiles })
     const filesFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof FilesError) return sendJson(res, err.status, { error: err.code, message: err.message })
@@ -264,6 +296,40 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     const kanban = new KanbanService({ store: db, inbox, now: options.now, tickMs: options.kanbanTickMs, leaseMs: options.kanbanLeaseMs })
     kanban.attach(hermes)
     hermes.attachKanban(kanban)
+    const scout = new ScoutService({
+      store: db,
+      inbox,
+      kanban,
+      runs: runMgr,
+      execute: executor,
+      slot: { tryClaim: (p) => scheduler.tryClaimProvider(p), release: (p) => scheduler.releaseProvider(p) },
+      now: options.now,
+      tickMs: options.scoutTickMs,
+      allowLocal: options.scoutAllowLocal,
+      slotWaitMs: options.scoutSlotWaitMs,
+      slotPollMs: 25,
+      fetchTimeoutMs: options.scoutFetchTimeoutMs,
+    })
+    const homeCards = new HomeService({
+      inbox: () => {
+        const { items, counts } = inbox.list({ status: 'needs_me' })
+        return { items, total: counts.needsMe }
+      },
+      tasks: () => ({ tasks: scheduler.list(), paused: runMgr.paused }),
+      runs: () => runMgr.list(),
+      workflowRuns: () => workflows.runs(),
+      hermes: () => hermes.overview(),
+      board: () => kanban.board(),
+      connections: () => connections.list(),
+      scout: () => ({ running: scout.overview().running, findings: scout.findings() }),
+      recentFiles: () => files.recentFiles(5),
+      projects: () => files.projectNames(),
+      now: options.now,
+    })
+    const scoutFail = (res: ServerResponse, err: unknown) => {
+      if (err instanceof ScoutError) return sendJson(res, err.status, { error: err.code, message: err.message })
+      sendJson(res, 500, { error: 'scout error' })
+    }
     const kanbanFail = (res: ServerResponse, err: unknown) => {
       if (err instanceof KanbanError) return sendJson(res, err.status, { error: err.code, message: err.message })
       sendJson(res, 500, { error: 'kanban error' })
@@ -568,6 +634,70 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           return workflowFail(res, err)
         }
       }
+      if (url.pathname.startsWith('/api/terminal')) {
+        const sub = url.pathname.slice('/api/terminal'.length)
+        const session = /^\/sessions\/([0-9a-f-]{36}|agent)(?:\/(input|resize|stream))?$/.exec(sub)
+        const run = (work: () => unknown, status = 200) => {
+          try {
+            sendJson(res, status, work())
+          } catch (err) {
+            terminalFail(res, err)
+          }
+        }
+        const withBody = (limit: number, work: (body: any) => unknown | Promise<unknown>, status = 200) =>
+          void readJson(req, limit).then(
+            (body) => Promise.resolve().then(() => work(body ?? {})).then((out) => sendJson(res, status, out), (err) => terminalFail(res, err)),
+            () => sendJson(res, 400, { error: 'bad request' }),
+          )
+        if (req.method === 'GET' && sub === '') return void terminal.overview().then((o) => sendJson(res, 200, o), (err) => terminalFail(res, err))
+        if (req.method === 'POST' && sub === '/sessions') return withBody(1024, (b) => terminal.open(b.kind, b.cols, b.rows), 201)
+        if (req.method === 'POST' && sub === '/agent/exec') return withBody(8192, (b) => terminal.requestAgent(b.actor, b.command, b.runId, b.approvalId))
+        if (session) {
+          const [, id, act] = session as unknown as [string, string, string | undefined]
+          if (req.method === 'DELETE' && !act) return run(() => {
+            if (id === 'agent') throw new TerminalError(403, 'read_only', 'The agent tab stays.')
+            terminal.close(id, 'closed')
+            return { closed: true }
+          })
+          if (req.method === 'POST' && act === 'input') return withBody(8192, (b) => (terminal.input(id, b.data), { ok: true }))
+          if (req.method === 'POST' && act === 'resize') return withBody(1024, (b) => (terminal.resize(id, b.cols, b.rows), { ok: true }))
+          if (req.method === 'GET' && act === 'stream') {
+            // Output as server-sent events. A write after the browser left would raise an unhandled stream error, so every write is guarded.
+            let gone = false
+            let unsubscribe: (() => void) | undefined
+            const leave = () => {
+              gone = true
+              unsubscribe?.()
+              clearInterval(beat)
+            }
+            const safeWrite = (chunk: string, end = false) => {
+              if (gone || res.writableEnded || res.destroyed) return leave()
+              try {
+                res.write(chunk)
+                if (end) res.end()
+              } catch {
+                leave()
+              }
+            }
+            const beat = setInterval(() => safeWrite(': heartbeat\n\n'), 15_000)
+            res.on('error', leave)
+            res.on('close', leave)
+            try {
+              const sub = terminal.subscribe(id, (frame) => safeWrite(`data: ${JSON.stringify(frame)}\n\n`, frame.type === 'closed'))
+              res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive' })
+              unsubscribe = sub.unsubscribe
+              // Headers go out now, not with the first output: a quiet tab must still connect.
+              safeWrite(': connected\n\n')
+              if (sub.replay) safeWrite(`data: ${JSON.stringify({ type: 'data', data: sub.replay })}\n\n`)
+              if (gone) unsubscribe()
+            } catch (err) {
+              clearInterval(beat)
+              terminalFail(res, err)
+            }
+            return
+          }
+        }
+      }
       if (url.pathname.startsWith('/api/files') || url.pathname.startsWith('/api/projects')) {
         const sub = url.pathname.startsWith('/api/files') ? url.pathname.slice('/api/files'.length) : `/projects${url.pathname.slice('/api/projects'.length)}`
         const q = url.searchParams
@@ -618,6 +748,65 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           }
         }
         if (req.method === 'GET' && sub === '/projects') return guardAsync(async () => ({ projects: await files.projects() }))
+      }
+      if (req.method === 'GET' && url.pathname === '/api/home') {
+        homeCards.get().then(
+          (body) => sendJson(res, 200, body),
+          () => sendJson(res, 500, { error: 'home error' }),
+        )
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/api/search') {
+        try {
+          return sendJson(res, 200, searchEverything({ store: db, workflows: () => workflows.list(), files: (q) => files.search({ q }).hits }, url.searchParams.get('q') ?? ''))
+        } catch {
+          return sendJson(res, 500, { error: 'search error' })
+        }
+      }
+      if (url.pathname.startsWith('/api/scout')) {
+        const sub = url.pathname.slice('/api/scout'.length)
+        const send = (work: () => unknown | Promise<unknown>, status = 200) =>
+          void Promise.resolve()
+            .then(work)
+            .then((body) => sendJson(res, status, body), (err) => (err instanceof ChatError ? chatFail(res, err) : scoutFail(res, err)))
+        const withBody = (work: (body: any) => unknown | Promise<unknown>, status = 200) =>
+          void readJson(req, 16_384).then(
+            (body) => send(() => work(body ?? {}), status),
+            () => sendJson(res, 400, { error: 'bad request' }),
+          )
+        const source = /^\/sources\/([0-9a-f-]{36})$/.exec(sub)
+        const finding = /^\/findings\/([0-9a-f-]{36})\/(dismiss|card|ask)$/.exec(sub)
+        if (req.method === 'GET' && sub === '') return send(() => scout.overview())
+        if (req.method === 'GET' && sub === '/findings') return send(() => ({ findings: scout.findings(url.searchParams.get('dismissed') === '1') }))
+        if (req.method === 'POST' && sub === '/run') {
+          return send(() => {
+            void scout.run('manual').catch(() => {})
+            return { started: true }
+          }, 202)
+        }
+        if (req.method === 'POST' && sub === '/digest') return send(() => scout.digest())
+        if (req.method === 'PUT' && sub === '/settings') return withBody((b) => scout.setSettings(b))
+        if (req.method === 'POST' && sub === '/sources') return withBody((b) => scout.addSource(b), 201)
+        if (source) {
+          const [, sourceId] = source as unknown as [string, string]
+          if (req.method === 'PATCH') return withBody((b) => scout.updateSource(sourceId, b))
+          if (req.method === 'DELETE') return send(() => (scout.removeSource(sourceId), { deleted: true }))
+        }
+        if (finding && req.method === 'POST') {
+          const [, findingId, act] = finding as unknown as [string, string, string]
+          if (act === 'dismiss') return withBody((b) => scout.dismiss(findingId, b.reason))
+          if (act === 'card') return send(() => scout.makeCard(findingId), 201)
+          if (act === 'ask') {
+            return withBody(async (b) => {
+              const f = scout.getFinding(findingId)
+              // Nothing is sent to a provider the owner has not accepted: say so before a chat is even created.
+              if (!chat.acknowledged().includes('claude')) return { conversationId: null, status: 'disclosure_required' }
+              const conversation = chat.createConversation({ provider: 'claude', title: f.title.slice(0, 60) })
+              const sent = await chat.send(conversation.id, { content: scout.chatMessage(findingId, b.question) })
+              return { conversationId: conversation.id, status: sent.status }
+            })
+          }
+        }
       }
       if (url.pathname.startsWith('/api/kanban')) {
         const sub = url.pathname.slice('/api/kanban'.length)
@@ -913,7 +1102,10 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     workflows.begin()
     await hermes.start()
     kanban.start()
+    homeCards.warm()
+    scout.start()
     files.start()
+    terminal.start()
 
     let closing: Promise<void> | undefined
     return {
@@ -926,7 +1118,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           await scheduler.stop()
           await workflows.end()
           kanban.stopService()
+          await scout.stopService()
           await files.stopService()
+          terminal.stopService()
           await hermes.stopService()
           await runMgr.closeAll()
           for (const res of streams) res.end()

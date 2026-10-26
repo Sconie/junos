@@ -1,15 +1,19 @@
 # JunOS
 
-A personal AI command center. Early scaffold: every section is an empty shell.
+A personal AI command center that runs on your PC: a daemon (`junosd`) and a browser UI. It uses your existing subscriptions through their official command-line tools, never API keys. Everything with an effect goes through one approval gateway, and **Stop** halts it all. The sections below describe each part; details are in `docs/specs`.
 
 ## Sections
 
-- **Overview**: landing page linking to everything else
-- **Chat**: provider, model and effort picker (not wired to any model yet)
-- **Scheduled**: crons and recurring tasks
-- **Hermes**: its own tabbed interface for the Hermes agent
-- **Files & projects**: overview of what you are working on
-- **Connections**: future home for linking Claude, Codex, Cursor, Grok and Nous Portal subscriptions instead of API keys
+- **Home**: what needs you, what is running, what is next, and the command palette (Ctrl K)
+- **Inbox** and **Approvals**: one queue of decisions, results and failures, also on Telegram when you set it up
+- **Chat**: Claude and Codex with a model and effort picker, files and projects attached as data
+- **Scheduled** and **Workflows**: prompts on a cron schedule, and YAML workflows with approval steps and loop guards
+- **Board**: a Kanban board that Hermes can fill and pick up from, but never finish
+- **Scout**: read-only suggestions from feeds you switch on
+- **Hermes**: the agent console (against a mock until the real shim exists)
+- **Terminal**: a PC shell tab (WSL), an agent tab you cannot type in, and a VPS tab waiting for the shim
+- **Files & projects**: folders you add, searchable, with safe previews
+- **Connections**: the state of each subscription, from offline checks
 
 ## Layout
 
@@ -150,6 +154,32 @@ The **Files & projects** screen is read-only. Add a folder by its full path and 
 - **Previews** render in an iframe with `sandbox=""` (no scripts, no same-origin access) and a policy inside it; Markdown is escaped before it is rendered, so HTML in a file stays text, and links are not live. PDFs and other files are not previewed; images and PDFs can be downloaded as an attachment under `sandbox` and `nosniff`.
 - **Projects** are folders containing `.git`: branch, last commit, changed files, language mix and a 14-day commit sparkline, read with fixed `git` commands (no hooks, no fsmonitor). Not built: open PRs through `gh`, "Open in editor" and "Give to Hermes".
 - **Chat.** "Open in Chat" starts a conversation with the project attached: each message carries the project's file list (names and sizes, never contents) as data. "Ask about this file" attaches up to 3 text files to one message, with secret-looking strings masked; the text goes with that message only and the chat stores just "(Attached: name)". The provider notice must have been accepted first. The CLI still runs in its isolated empty directory with tools off, so a model sees only what you attach.
+
+### Terminal
+
+The **Terminal** screen has tabs you type in and one tab you cannot. **New PC tab** opens a real shell on this PC in a pseudo-terminal owned by junosd: **WSL** on Windows (Jonas's choice), the login shell elsewhere (`JUNOS_TERMINAL_SHELL` and `JUNOS_TERMINAL_ARGS` override it). It uses `node-pty` (an optional dependency: where it cannot be installed, the tab says so and nothing else is affected) and `xterm.js` in the browser, over the same cookie, origin and CSRF checks as the rest of the API: output arrives as server-sent events, typing and resizing are small POSTs.
+
+- **Your typing is not gated.** Keystrokes go straight to your shell; they are not run through approvals and are not recorded (only that a tab opened and closed). The shell gets your environment minus JunOS's own `JUNOS_*` settings. Closing a tab keeps a short, redacted tail of its output in the event log for audit.
+- **Agent commands are gated and kept apart.** What an agent, a workflow or Hermes runs goes through `POST /api/terminal/agent/exec` and the gateway: only plainly read-only commands (`pwd`, `ls`, `echo`, `git status|log|diff|branch`, no shell punctuation) run at once; **everything else needs a digest-bound, single-use approval** (a shell can do anything, so it is classed as destructive). Each command is logged as an event with its actor and result, runs in the PC's Linux shell with a 60 s limit, a 20 KB output cap and secrets masked, and shows up only in the read-only **Agent** tab. No route lets an agent write to a tab you type in, and the agent tab refuses input.
+- **Stop** closes every tab and ends every running agent command; an idle VPS tab closes after 15 minutes.
+- **VPS tab.** It goes through the Hermes shim over Tailscale, which is not built yet (#15), so the tab says why it cannot open. `JUNOS_TERMINAL_VPS=mock` gives a scripted stand-in for building the screen. No SSH key or token is used or stored here.
+- Sessions do not survive a junosd restart, and there is no scrollback between restarts. On Windows, closing a tab may print "AttachConsole failed" from a node-pty helper when junosd runs with a console; the tab is closed regardless.
+
+### Scout
+
+The **Scout** screen suggests changes for JunOS from feeds you switch on, scored for relevance. **It only reads**: it never installs, edits code, opens a PR or runs a command. Making a card or asking Claude is a separate click of yours.
+
+- **Sources.** Four suggested release feeds (Claude Code, Codex CLI, Vite, React) are added **switched off**: nothing is fetched until you turn one on. You can add any http(s) feed, and an optional **self-report** that reads only counters (runs, failures, waiting approvals), never message or file content. An address with a password in it, or on this machine or network, is refused. Fetching is a plain GET (no cookies), redirects are re-checked, and a feed over 1 MB or slower than 10 s is an error shown on its source.
+- **Pipeline.** Collect new items (only the ones not seen before; a title you dismissed or already have a finding for is skipped before any model call), **filter** with a cheap pass, **assess** what is left (relevance 0 to 100, effort S/M/L, risk, what it would touch, why, a suggested change), then publish findings at or above the threshold (default 60) as findings and Inbox `finding` items. What scored lower goes into a weekly **digest** item (built from the stored scores, no model call). Both model calls run through the shared executor: the CLI with tools off, in an empty folder, with the provider's single slot, and the web text wrapped in `<untrusted-data>` markers with a note not to follow instructions in it. A reply that is not the requested JSON fails the run and leaves the items to be tried again.
+- **Schedule and budget.** Each source has a cadence (daily or weekly) and Scout looks every 5 minutes for sources that are due. A scheduled run is skipped when the daily model-call budget is spent (default 6) or the plan says its limit is reached; **Run now** always goes ahead.
+- **Your clicks.** *Make card* creates a Kanban card in Ideas labelled `scout` (creator `scout`, never assigned), once per finding, with the why, suggestion, link and the finding id. *Ask Claude* starts a chat with the finding's text wrapped as data; it needs the provider notice accepted first. *Dismiss* takes a reason (not relevant, already know, too risky, later): the title never returns, and the last ten dismissals go into the filter prompt as examples.
+- Not built: dependency checks (`npm outdated`), web-search "ideas" sources, and a draft-PR proposal (deferred in the spec).
+
+### Home and the command palette
+
+**Home** is a glance, not a place to work: **Needs you** (the top five Inbox items, approvals first), **Running now**, **Next runs**, **Hermes**, **Board**, **Subscriptions**, **Scout** and **Recent projects and files**, plus a quick ask. `GET /api/home` returns one payload with a status for every card (`ok`, `error`, or `stale` with the last good data and when it is from), so a card that fails or is slow never breaks the page: it says so and offers Retry (and tries again by itself a few times). The sign-in checks are slow, so that card is waited for only 0.7 s, keeps loading in the background and is warmed at start. Home follows the event stream and loads in milliseconds from local data. An approval can be approved from Home only when it is not irreversible; anything that sends, deletes or spends is reviewed in the Inbox (Deny is always one click).
+
+**Ctrl K** (⌘K on a Mac), or the Search button in the top bar, opens the **command palette** from any screen. It jumps to every screen, and finds chats, messages, cards, Scout findings, Inbox items, tasks, workflows, projects and indexed files (`GET /api/search`, local data only; a plain text match, with the file index using its own full-text search and its exclusions). It can add a card from what you typed, send it to Hermes, or start a workflow that needs no input, without leaving the page. What you type is never sent to a model on its own: **Ask Claude** is an explicit last row for a sentence, it says it sends the text, and the provider notice still applies. Matches are fuzzy, what you used last comes first, and everything works from the keyboard.
 
 ### Connections
 
