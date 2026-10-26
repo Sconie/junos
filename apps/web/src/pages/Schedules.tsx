@@ -99,7 +99,7 @@ export default function Schedules() {
         </button>
       </div>
 
-      <table className="table tasks">
+      <table className="table tasks stack">
         <thead>
           <tr>
             <th>Status</th>
@@ -121,20 +121,20 @@ export default function Schedules() {
           )}
           {visible.map((t) => (
             <tr key={t.id}>
-              <td>{statusOf(t)}</td>
-              <td>
+              <td data-label="Status">{statusOf(t)}</td>
+              <td data-label="Name">
                 <b>{t.name}</b>
               </td>
-              <td>
+              <td data-label="Schedule">
                 <code>{t.cron}</code> <span className="muted">{t.timezone}</span>
               </td>
-              <td>
+              <td data-label="Target">
                 {PROVIDER_LABEL[t.provider] ?? t.provider}
                 <span className="muted"> · {t.model || 'default'} · {t.effort}</span>
               </td>
-              <td>{t.lastRun ? `${t.lastRun.status} · ${fmt(t.lastRun.finishedAt ?? t.lastRun.startedAt)}` : '—'}</td>
-              <td>{fmt(t.nextRuns[0] ?? null)}</td>
-              <td className="task-actions">
+              <td data-label="Last run">{t.lastRun ? `${t.lastRun.status} · ${fmt(t.lastRun.finishedAt ?? t.lastRun.startedAt)}` : '—'}</td>
+              <td data-label="Next run">{fmt(t.nextRuns[0] ?? null)}</td>
+              <td className="task-actions" data-label="Actions">
                 <button type="button" onClick={() => void post(`/tasks/${t.id}/run`)} disabled={data.paused}>
                   Run now
                 </button>

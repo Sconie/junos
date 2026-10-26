@@ -39,6 +39,8 @@ npm run lint && npm run typecheck && npm run test && npm run build
 
 `npm test` runs the daemon API tests (fake provider CLIs) and the web shell smoke tests. `npm run build` builds every workspace that has a build.
 
+**On a phone** (narrow screens) the sidebar becomes a bar at the bottom with Home, Inbox, Chat and Board, and a More sheet for the rest and the junosd status. Search and Stop stay pinned at the top, the board scrolls one column at a time, and tables of records become cards. It is checked at 390 px width in a desktop browser (no horizontal scroll on any screen), not on a real phone.
+
 The sidebar pill shows the live junosd state, driven by the SSE stream (`/api/events`).
 
 ### Pairing and localhost protection
