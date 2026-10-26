@@ -1,0 +1,26 @@
+[Unit]
+Description=JunOS Hermes shim
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+# A dedicated, unprivileged user. It needs read access to Hermes's memory and skills folders, and write access to its own state folder.
+User=junos-shim
+EnvironmentFile=/etc/junos-hermes-shim.env
+WorkingDirectory=/opt/junos-hermes-shim
+ExecStart=/usr/bin/node src/main.ts
+Restart=on-failure
+RestartSec=3
+StateDirectory=junos-hermes-shim
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/junos-hermes-shim
+# Hermes's memory folder is read here; the shim writes junos-notes.md into it, so allow that one path.
+ReadWritePaths=/opt/data/memories
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

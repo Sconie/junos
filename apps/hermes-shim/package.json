@@ -1,0 +1,20 @@
+{
+  "name": "@junos/hermes-shim",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "The small service that sits next to Hermes on the VPS and lets junosd supervise it. It has no dependencies.",
+  "bin": {
+    "junos-hermes-shim": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "test": "node --test --test-concurrency=1 \"test/*.test.ts\""
+  },
+  "dependencies": {
+    "@junos/shared": "*"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
