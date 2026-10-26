@@ -1,0 +1,29 @@
+# A sidecar next to Hermes. Merge into your compose file; names and paths are examples.
+# Only the shim publishes a port, and only on the Tailscale address. Hermes publishes nothing.
+services:
+  junos-hermes-shim:
+    image: node:24-slim
+    working_dir: /app
+    command: ["node", "src/main.ts"]
+    user: "1000:1000"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    env_file: /etc/junos-hermes-shim.env      # holds HERMES_API_KEY; never commit it
+    environment:
+      JUNOS_SHIM_HOST: "0.0.0.0"              # accepted only inside a container, with the next line
+      JUNOS_SHIM_CONTAINER: "1"
+      HERMES_API_URL: "http://hermes:8642"    # the Hermes container's name on the private network
+      JUNOS_SHIM_HOOK_CIDRS: "172.16.0.0/12"  # so Hermes, on the Docker network, may call the approval hooks
+      JUNOS_SHIM_STATE_DIR: "/state"          # the writable volume below; the app folder is read-only
+    ports:
+      - "100.x.y.z:8650:8650"                 # replace with this VPS's Tailscale address
+    volumes:
+      - ./apps/hermes-shim:/app:ro
+      - hermes-memories:/opt/data/memories    # read, plus junos-notes.md
+      - hermes-skills:/opt/data/skills:ro
+      - shim-state:/state
+    tmpfs: ["/tmp"]
+volumes:
+  shim-state: {}

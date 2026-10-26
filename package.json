@@ -14,7 +14,7 @@
     "dev:web": "npm run dev -w @junos/web",
     "dev:daemon": "npm run start -w @junos/daemon",
     "build": "npm run build --workspaces --if-present",
-    "typecheck": "tsc -b apps/daemon packages/shared && tsc -b apps/web",
+    "typecheck": "tsc -b apps/daemon apps/hermes-shim packages/shared && tsc -b apps/web",
     "lint": "oxlint",
     "test": "npm test --workspaces --if-present",
     "backup:verify": "node apps/daemon/src/backup-cli.ts"

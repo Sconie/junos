@@ -58,6 +58,8 @@ import { StaticUi } from './static-ui.ts'
 import { MockVpsShell, TerminalError, TerminalService, terminalTools, type AgentShell, type LocalShell, type ShellOpener } from './terminal.ts'
 import { NoHermes, type HermesBridge } from './hermes/bridge.ts'
 import { MockHermes } from './hermes/mock.ts'
+import { HttpHermes } from './hermes/http.ts'
+import { ShimHermes } from './hermes/shim.ts'
 import { TelegramBridge, telegramConfigFromEnv } from './telegram.ts'
 import { acquireLock } from './lock.ts'
 import { FAKE_RUNS, PausedError, RunManager } from './runs.ts'
@@ -155,6 +157,17 @@ const DEFAULT_UI_ORIGINS = ['http://127.0.0.1:5173', 'http://localhost:5173']
 const VERSION = (
   JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
 ).version
+
+/** The real Hermes over its API. A bad address becomes a clear "not connected" instead of stopping junosd from starting. The key is never logged. */
+function remoteHermes(url: string, key: string | undefined, now?: () => number, protocol?: string): HermesBridge {
+  try {
+    // 'shim' is the small service next to Hermes on the VPS (apps/hermes-shim); otherwise Hermes's own API is used.
+    if (protocol === 'shim') return new ShimHermes({ baseUrl: url, apiKey: key, now })
+    return new HttpHermes({ baseUrl: url, apiKey: key, now })
+  } catch (err) {
+    return new NoHermes(err instanceof Error ? err.message : 'The Hermes address was not accepted.')
+  }
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' })
@@ -301,7 +314,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
     })
     const bridge =
       options.hermes ??
-      (env.JUNOS_HERMES === 'mock'
+      (env.JUNOS_HERMES_URL
+        ? remoteHermes(env.JUNOS_HERMES_URL, env.JUNOS_HERMES_KEY, options.now, env.JUNOS_HERMES_PROTOCOL)
+        : env.JUNOS_HERMES === 'mock'
         ? new MockHermes({ now: options.now })
         : new NoHermes('Hermes is not connected yet. Start junosd with JUNOS_HERMES=mock to try the console with a stand-in agent.'))
     const hermes = new HermesService({ store: db, gateway, inbox, runs: runMgr, bridge, now: options.now, pollMs: options.hermesPollMs })
