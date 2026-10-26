@@ -826,3 +826,134 @@ export interface AgentExecRequest {
   runId?: string
   approvalId?: string
 }
+
+// ---- Scout (spec 08) ----
+
+export type ScoutCadence = 'daily' | 'weekly'
+export type ScoutSourceKind = 'feed' | 'self'
+export const SCOUT_DISMISS_REASONS = ['not relevant', 'already know', 'too risky', 'later'] as const
+export type ScoutDismissReason = (typeof SCOUT_DISMISS_REASONS)[number]
+
+export interface ScoutSource {
+  id: string
+  name: string
+  kind: ScoutSourceKind
+  /** The feed address. Empty for the JunOS self-report. */
+  url: string
+  cadence: ScoutCadence
+  enabled: boolean
+  lastCheckedAt: string | null
+  /** `ok`, `error` or `never` (not checked yet). */
+  health: 'ok' | 'error' | 'never'
+  lastError: string | null
+}
+
+export interface ScoutSourceInput {
+  name: string
+  url?: string
+  kind?: ScoutSourceKind
+  cadence?: ScoutCadence
+  enabled?: boolean
+}
+
+export interface ScoutSettings {
+  /** Findings at or above this relevance reach the Inbox. */
+  threshold: number
+  /** Model calls Scout may make per day on a schedule (a manual run is always allowed). */
+  dailyModelCalls: number
+  provider: 'claude' | 'codex'
+}
+
+export interface ScoutFinding {
+  id: string
+  title: string
+  sourceName: string
+  link: string
+  summary: string
+  relevance: number
+  effort: 'S' | 'M' | 'L'
+  risk: 'low' | 'medium' | 'high'
+  touches: string
+  why: string
+  suggestion: string
+  status: 'new' | 'dismissed' | 'carded'
+  dismissReason: string | null
+  cardId: string | null
+  createdAt: string
+}
+
+export interface ScoutRunRecord {
+  id: string
+  trigger: 'manual' | 'schedule'
+  status: 'running' | 'succeeded' | 'failed' | 'skipped'
+  startedAt: string
+  finishedAt: string | null
+  sources: number
+  items: number
+  kept: number
+  findings: number
+  modelCalls: number
+  error: string | null
+  log: string[]
+}
+
+export interface ScoutOverview {
+  sources: ScoutSource[]
+  settings: ScoutSettings
+  findings: ScoutFinding[]
+  runs: ScoutRunRecord[]
+  running: boolean
+}
+
+// ---- Home and search (spec 10) ----
+
+/** One Home card. A card that fails does not break the page: it says so, and keeps its last good data as `stale` when it has one. */
+export interface HomeCard<T> {
+  status: 'ok' | 'error' | 'stale'
+  asOf: string
+  data: T | null
+  error: string | null
+}
+
+export interface HomeNeedsItem {
+  id: string
+  kind: InboxKind
+  priority: InboxPriority
+  title: string
+  body: string
+  createdAt: string
+  /** For a waiting approval: what a decision from here may be. Irreversible ones are reviewed in the Inbox, not approved from Home. */
+  approval: { id: string; irreversible: boolean } | null
+}
+
+export interface HomeData {
+  needs: { total: number; items: HomeNeedsItem[] }
+  running: { items: Array<{ kind: 'run' | 'workflow' | 'task' | 'scout' | 'hermes'; label: string; since: string | null }> }
+  upcoming: { paused: boolean; tasks: Array<{ id: string; name: string; cron: string; timezone: string; next: string | null; running: boolean }> }
+  hermes: { mode: 'mock' | 'remote' | 'none'; state: string; currentTask: string | null; model: string; steps: Array<{ summary: string; status: string }>; stopUnconfirmed: boolean }
+  board: { counts: Array<{ key: string; name: string; count: number }>; hermesWorkingOn: { id: string; title: string } | null; blocked: Array<{ id: string; title: string }> }
+  subscriptions: Array<{ provider: string; label: string; state: string; detail: string; resetsAt: string | null; note: string | null }>
+  scout: Array<{ id: string; title: string; relevance: number; effort: string; sourceName: string }>
+  recent: { projects: Array<{ id: string; name: string; fileCount: number }>; files: Array<{ folderId: string; path: string; name: string; kind: string; modifiedAt: string }> }
+}
+
+export type HomeResponse = { now: string; cards: { [K in keyof HomeData]: HomeCard<HomeData[K]> } }
+
+export interface SearchHit {
+  id: string
+  title: string
+  subtitle: string
+  /** Where the screen for it is. */
+  to: string
+}
+
+export interface SearchGroup {
+  type: 'conversations' | 'messages' | 'cards' | 'findings' | 'inbox' | 'tasks' | 'workflows' | 'projects' | 'files'
+  label: string
+  hits: SearchHit[]
+}
+
+export interface SearchResponse {
+  q: string
+  groups: SearchGroup[]
+}

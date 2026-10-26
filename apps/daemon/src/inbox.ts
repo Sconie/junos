@@ -219,6 +219,12 @@ export class InboxService {
     return row && this.#toItem(row)
   }
 
+  /** The item about a given thing (a Scout finding, say), if it has one. */
+  findByRef(kind: InboxKind, refId: string): InboxItem | undefined {
+    const row = this.#byRef(kind, refId)
+    return row && this.#toItem(row)
+  }
+
   byApproval(approvalId: string): InboxItem | undefined {
     const row = this.#byRef('approval', approvalId)
     return row && this.#toItem(row)

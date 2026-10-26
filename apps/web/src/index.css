@@ -317,3 +317,32 @@ a.button { display: inline-block; padding: 3px 8px; font-size: 13px; border: 1px
 .terminal-bar { align-items: center; gap: 8px; margin-top: 12px; }
 .terminal-tab { display: inline-flex; align-items: center; gap: 2px; }
 .terminal-host { height: 460px; margin-top: 8px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: #15171a; }
+
+.scout-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 16px; margin-top: 12px; align-items: start; }
+@media (max-width: 900px) { .scout-grid { grid-template-columns: minmax(0, 1fr); } }
+.scout-finding { display: grid; gap: 4px; margin-top: 8px; }
+.scout-finding p { margin: 2px 0; }
+.scout-finding .chip { margin-right: 4px; }
+.scout-detail { margin-top: 12px; display: grid; gap: 4px; }
+.scout-detail h4 { margin: 8px 0 0; }
+.scout-sources { list-style: none; padding: 0; display: grid; gap: 12px; }
+.scout-sources p { margin: 2px 0; word-break: break-all; }
+.bad { color: var(--bad); }
+
+.home-ask { display: flex; gap: 8px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+.home-ask input { flex: 1; min-width: 240px; }
+.home-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 12px; }
+.home-card { display: grid; gap: 6px; align-content: start; }
+.home-card h3 { margin: 0; }
+.home-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.home-skeleton { animation: hermes-pulse 1.4s ease-in-out infinite; }
+.palette-open { margin-right: 8px; }
+.palette-toast { position: fixed; bottom: 16px; right: 16px; margin: 0; padding: 8px 14px; border-radius: 8px; background: var(--panel-strong); border: 1px solid var(--border); z-index: 60; }
+.palette-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; justify-content: center; align-items: flex-start; padding-top: 12vh; z-index: 50; }
+.palette { width: min(640px, calc(100vw - 32px)); max-height: 70vh; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 8px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); }
+.palette > input { width: 100%; box-sizing: border-box; font-size: 16px; padding: 10px 12px; }
+.palette ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.palette-group { font-size: 12px; color: var(--muted); padding: 8px 8px 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+.palette-row { padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+.palette-row.active { background: var(--panel-strong); }
+.palette-empty { padding: 12px; }

@@ -278,6 +278,76 @@ const MIGRATIONS = [
    );
    CREATE VIRTUAL TABLE file_fts USING fts5(path, content);
    ALTER TABLE conversation ADD COLUMN project_id TEXT`,
+  // Scout (spec 08): read-only collection and assessment. Web text is stored as data.
+  `CREATE TABLE scout_source (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL,
+     kind TEXT NOT NULL DEFAULT 'feed',
+     url TEXT NOT NULL DEFAULT '',
+     cadence TEXT NOT NULL DEFAULT 'daily',
+     enabled INTEGER NOT NULL DEFAULT 0,
+     last_checked_at TEXT,
+     health TEXT NOT NULL DEFAULT 'never',
+     last_error TEXT,
+     created_at TEXT NOT NULL
+   );
+   CREATE TABLE scout_item (
+     id TEXT PRIMARY KEY,
+     source_id TEXT NOT NULL,
+     guid TEXT NOT NULL,
+     title TEXT NOT NULL,
+     link TEXT NOT NULL DEFAULT '',
+     published_at TEXT,
+     summary TEXT NOT NULL DEFAULT '',
+     title_key TEXT NOT NULL,
+     status TEXT NOT NULL DEFAULT 'new',
+     relevance INTEGER,
+     seen_at TEXT NOT NULL,
+     UNIQUE (source_id, guid)
+   );
+   CREATE TABLE scout_finding (
+     id TEXT PRIMARY KEY,
+     item_id TEXT NOT NULL,
+     title TEXT NOT NULL,
+     title_key TEXT NOT NULL UNIQUE,
+     source_name TEXT NOT NULL,
+     link TEXT NOT NULL DEFAULT '',
+     summary TEXT NOT NULL DEFAULT '',
+     relevance INTEGER NOT NULL,
+     effort TEXT NOT NULL,
+     risk TEXT NOT NULL,
+     touches TEXT NOT NULL,
+     why TEXT NOT NULL,
+     suggestion TEXT NOT NULL,
+     status TEXT NOT NULL DEFAULT 'new',
+     dismiss_reason TEXT,
+     card_id TEXT,
+     created_at TEXT NOT NULL
+   );
+   CREATE TABLE scout_dismissal (
+     title_key TEXT PRIMARY KEY,
+     title TEXT NOT NULL,
+     reason TEXT NOT NULL,
+     at TEXT NOT NULL
+   );
+   CREATE TABLE scout_run (
+     id TEXT PRIMARY KEY,
+     trigger TEXT NOT NULL,
+     status TEXT NOT NULL,
+     started_at TEXT NOT NULL,
+     finished_at TEXT,
+     sources INTEGER NOT NULL DEFAULT 0,
+     items INTEGER NOT NULL DEFAULT 0,
+     kept INTEGER NOT NULL DEFAULT 0,
+     findings INTEGER NOT NULL DEFAULT 0,
+     model_calls INTEGER NOT NULL DEFAULT 0,
+     error TEXT,
+     log_json TEXT NOT NULL DEFAULT '[]'
+   );
+   CREATE TABLE scout_setting (
+     key TEXT PRIMARY KEY,
+     value TEXT NOT NULL
+   )`,
 ]
 
 /** SQLite-backed append-only event table. `seq` drives SSE resume. */

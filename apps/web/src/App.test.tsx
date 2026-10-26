@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import App from './App'
 
 const pages = [
-  { label: 'Overview', href: '/', heading: 'Good to see you' },
+  { label: 'Home', href: '/', heading: /^(Still up|Good (morning|afternoon|evening))$/ },
+  { label: 'Board', href: '/board', heading: 'Board' },
+  { label: 'Scout', href: '/scout', heading: 'Scout' },
+  { label: 'Workflows', href: '/workflows', heading: 'Workflows' },
   { label: 'Chat', href: '/chat', text: 'Start a conversation.' },
   { label: 'Scheduled', href: '/schedules', heading: 'Scheduled tasks' },
   { label: 'Hermes', href: '/hermes', heading: 'Hermes agent' },
