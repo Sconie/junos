@@ -16,6 +16,7 @@ services:
       JUNOS_SHIM_CONTAINER: "1"
       HERMES_API_URL: "http://hermes:8642"    # the Hermes container's name on the private network
       JUNOS_SHIM_HOOK_CIDRS: "172.16.0.0/12"  # so Hermes, on the Docker network, may call the approval hooks
+      JUNOS_SHIM_STATE_DIR: "/state"          # the writable volume below; the app folder is read-only
     ports:
       - "100.x.y.z:8650:8650"                 # replace with this VPS's Tailscale address
     volumes:

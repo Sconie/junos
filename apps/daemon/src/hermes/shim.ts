@@ -172,7 +172,14 @@ export class ShimHermes implements HermesBridge {
       this.#abort = abort
       try {
         await this.#checkShim()
-        const res = await fetch(new URL(`/v1/events?lastEventId=${this.#lastSeq}`, this.#base), { headers: { ...this.#headers(), accept: 'text/event-stream' }, signal: abort.signal })
+        // A tunnel that dies while connecting would otherwise hold this fetch open for minutes; the idle timer below only starts once there is a body.
+        const connecting = setTimeout(() => abort.abort(), 10_000)
+        let res: Response
+        try {
+          res = await fetch(new URL(`/v1/events?lastEventId=${this.#lastSeq}`, this.#base), { headers: { ...this.#headers(), accept: 'text/event-stream' }, signal: abort.signal })
+        } finally {
+          clearTimeout(connecting)
+        }
         if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
         wait = this.#reconnectMs
         await this.#read(res.body, abort)
