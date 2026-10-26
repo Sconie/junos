@@ -581,6 +581,30 @@ export class FilesService {
     return { name: p.name, text: redact(p.text) as string }
   }
 
+  // ---- for Home and search ----
+
+  /** The most recently changed files that are still allowed, newest first. */
+  recentFiles(limit = 5): FileEntry[] {
+    const folders = new Map(this.#folderRows().map((f) => [f.id, f]))
+    const projects = this.#projectRows()
+    const rows = this.#o.store.db.prepare('SELECT * FROM file_entry ORDER BY mtime_ms DESC LIMIT ?').all(limit * 6) as unknown as EntryRow[]
+    const out: FileEntry[] = []
+    for (const row of rows) {
+      const folder = folders.get(row.folder_id)
+      if (!folder || !this.#allowed(folder, row.rel_path)) continue
+      out.push(this.#toEntry(row, projects))
+      if (out.length >= limit) break
+    }
+    return out
+  }
+
+  /** Projects by name with file counts, from the index alone: no git is run, so it is cheap enough for Home. */
+  projectNames(): Array<{ id: string; name: string; fileCount: number }> {
+    return this.#projectRows()
+      .map((p) => ({ id: p.id, name: p.name, fileCount: this.#projectFiles(p).length }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+
   // ---- projects ----
 
   hasProject(id: string): boolean {
