@@ -74,5 +74,5 @@ Shim bound to the private interface only, firewall denies everything else, key-o
 
 ## Open questions
 - Keychain access from Node: which library or OS CLI wrapper?
-- Sandbox technology for CLI-backed agents on Jonas's machine: separate OS user, container, or worktree plus deny flags only? Decide in the Phase 0 spike.
+- Decided (2026-10-22, spike #6): CLI-backed agents run in a JunOS-owned worktree or scratch directory with each CLI's strictest native mode and a scrubbed environment; a separate OS user, WSL2 or container is Phase 4 hardening. See [16](16-adapter-spikes.md).
 - Decided (Jonas, 2026-10-22): Tailscale + shim for the VPS; separate JunOS Telegram bot for alerts. See also 15 for terminal rules.

@@ -11,7 +11,7 @@ Current scaffold: Vite + React shell with mock pages, no daemon, nothing wired. 
 - Adopt UI tokens (14); route stubs for all screens; mock API layer.
 - Repo layout: `apps/web`, `apps/daemon`, `packages/shared`.
 - Timeboxed spikes (1 day each, results written into the spec): Claude CLI streaming adapter, Codex CLI exec adapter, sandboxing options for CLI agents, whether Cursor headless works, Nous Portal official sign-in path. Grok/X: no spike until a supported route is known.
-**Done when**: UI runs on mock data; adapter feasibility recorded; sandbox approach chosen.
+**Done when**: UI runs on mock data; adapter feasibility recorded; sandbox approach chosen. Status 2026-10-22: feasibility and sandbox choice are recorded in [16](16-adapter-spikes.md); one live fixture per provider is still to capture in #9/#10.
 
 ## Phase 1: Safe core and chat
 - junosd with SQLite, event table with sequence numbers, SSE, browser pairing and cookie auth, Origin/Host checks, CSRF.
