@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The JunOS window is a page served by junosd at 127.0.0.1. It is given no access to the app's own commands: the tray and start-up are handled in Rust.",
+  "windows": ["main"],
+  "permissions": []
+}

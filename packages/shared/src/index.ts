@@ -6,16 +6,29 @@ export const API_PREFIX = '/api'
 export const PROVIDER_IDS = ['claude', 'codex', 'cursor', 'grok', 'nous'] as const
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 
+/** Public liveness probe: no session needed, so it says nothing about the machine. */
 export interface HealthResponse {
   ok: true
   name: 'junosd'
   version: string
+}
+
+/** Detailed status, only for a paired browser. */
+export interface StatusResponse extends HealthResponse {
   pid: number
   startedAt: string
   uptimeMs: number
   /** Highest event seq written so far (0 when the event table is empty). */
   lastSeq: number
 }
+
+/** Whether this browser holds a valid session. `csrf` goes in the x-junos-csrf header on every write. */
+export interface SessionResponse {
+  paired: boolean
+  csrf?: string
+}
+
+export const CSRF_HEADER = 'x-junos-csrf'
 
 export interface ProviderProbe {
   id: ProviderId
@@ -44,3 +57,934 @@ export interface JunosEvent {
 
 /** SSE event name used when the client's Last-Event-ID cannot be replayed. */
 export const RESYNC_EVENT = 'resync'
+
+// ---- Execution gateway (spec 12) ----
+
+export const ACTION_CLASSES = ['read', 'write-local', 'external-send', 'destructive', 'spend'] as const
+export type ActionClass = (typeof ACTION_CLASSES)[number]
+
+/** Classes that can never run without a valid, single-use approval, whatever the autonomy level. */
+export const ALWAYS_ASK_CLASSES: readonly ActionClass[] = ['external-send', 'destructive', 'spend']
+
+export const APPROVAL_STATUSES = ['pending', 'approved', 'consumed', 'denied', 'expired'] as const
+export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number]
+
+/** Body of POST /api/actions. The class is decided by the daemon from the tool, never by the caller. */
+export interface ActionRequest {
+  tool: string
+  args: Record<string, unknown>
+  project?: string
+  cwd?: string
+  runId?: string
+  /** Present when re-submitting an approved action to execute it. */
+  approvalId?: string
+}
+
+export type ActionResponse =
+  | { status: 'executed'; digest: string; class: ActionClass; result: unknown }
+  | { status: 'approval_required'; digest: string; class: ActionClass; approvalId: string; expiresAt: string }
+  | { status: 'denied'; digest: string; class: ActionClass; reason: string }
+  | { status: 'rejected'; digest: string; class: ActionClass; reason: ActionRejection; /** Why a tool refused, when the tool says it is safe to show. */ message?: string }
+
+export type ActionRejection =
+  | 'unknown_approval'
+  | 'digest_mismatch'
+  | 'run_mismatch'
+  | 'not_approved'
+  | 'expired'
+  | 'execution_failed'
+
+/** What the approval UI shows. `action` is the redacted copy of what was requested. */
+export interface ApprovalRecord {
+  id: string
+  status: ApprovalStatus
+  digest: string
+  class: ActionClass
+  actor: string
+  tool: string
+  target: string
+  project: string | null
+  runId: string | null
+  /** Redacted arguments, as they will be shown to the person deciding. */
+  args: unknown
+  requestedAt: string
+  expiresAt: string
+  decidedBy: string | null
+  decidedChannel: string | null
+  decidedAt: string | null
+  /** True for classes that cannot be undone (external-send, destructive, spend). */
+  irreversible: boolean
+}
+
+export interface GatewayInfo {
+  autonomy: 'ask-first' | 'balanced' | 'autonomous'
+  approvalTtlMs: number
+  /** Test tools are registered (never in a normal run). */
+  testTools: boolean
+  tools: Array<{ name: string; class: ActionClass }>
+}
+
+// ---- Runs and Stop (spec 12, 14) ----
+
+export const RUN_STATUSES = ['running', 'cancelling', 'stopped', 'finished', 'failed', 'stop_unconfirmed'] as const
+export type RunStatus = (typeof RUN_STATUSES)[number]
+
+/** An action that had already completed when a run was stopped. It cannot be undone. */
+export interface SideEffect {
+  digest: string
+  tool: string
+  class: ActionClass
+  target: string
+}
+
+export interface RunRecord {
+  id: string
+  kind: string
+  source: string
+  /** What was asked of the provider, so a run record shows what was actually sent (spec 04). */
+  provider: string | null
+  model: string | null
+  effort: string | null
+  status: RunStatus
+  startedAt: string
+  finishedAt: string | null
+  exitCode: number | null
+  signal: string | null
+  error: string | null
+  /** Set once a stop was requested for this run. */
+  stopRequestedAt: string | null
+  /** Completed side effects, listed when a run is stopped. */
+  sideEffects: SideEffect[]
+}
+
+export interface RunsResponse {
+  /** While true no new run may start and the gateway refuses everything but reads. */
+  paused: boolean
+  /** When the current Stop began (null when not stopped), so only that stop's side effects are shown. */
+  pausedAt: string | null
+  runs: RunRecord[]
+}
+
+// ---- Chat and provider adapters (spec 03, 04) ----
+
+/** One UI effort scale (spec 03). Each provider maps it to what exists. */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+export type Effort = (typeof EFFORTS)[number]
+
+export interface ModelInfo {
+  /** Value passed to the provider CLI (`--model`), or '' for the provider default. */
+  id: string
+  label: string
+  efforts: Effort[]
+}
+
+export interface ProviderModels {
+  provider: ProviderId
+  /** Where the list comes from, so the UI can say it honestly. */
+  source: 'static' | 'cli'
+  models: ModelInfo[]
+}
+
+/** Streamed output of one run, normalised across providers. */
+export type RunEvent =
+  | { type: 'token'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cachedTokens?: number }
+  | { type: 'rate_limit'; status: string; resetsAt?: string }
+  | { type: 'done'; text: string; stopReason?: string }
+  | { type: 'error'; message: string; kind: 'rate_limited' | 'needs_login' | 'failed' }
+
+export type ConversationKind = 'chat' | 'agent'
+
+export interface ConversationRecord {
+  id: string
+  title: string
+  kind: ConversationKind
+  provider: ProviderId
+  model: string
+  effort: Effort
+  /** Providers allowed to receive this conversation's context (spec 12). */
+  allowedProviders: ProviderId[]
+  /** The project attached to this conversation: its file list goes with each message, never the tree. */
+  projectId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type MessageStatus = 'complete' | 'streaming' | 'partial' | 'error'
+
+export interface MessageRecord {
+  id: string
+  conversationId: string
+  role: 'user' | 'assistant'
+  provider: ProviderId | null
+  model: string | null
+  effort: Effort | null
+  content: string
+  thinking: string
+  status: MessageStatus
+  error: string | null
+  runId: string | null
+  createdAt: string
+}
+
+export interface ConversationDetail {
+  conversation: ConversationRecord
+  messages: MessageRecord[]
+}
+
+export interface SendMessageRequest {
+  content: string
+  /** Optional per-message override; it also becomes the conversation's remembered choice. */
+  model?: string
+  effort?: Effort
+  /** Files from the indexed folders whose text goes with this message. At most 3. */
+  attachments?: AttachedFile[]
+}
+
+export type SendMessageResponse =
+  | { status: 'started'; userMessage: MessageRecord; assistantMessage: MessageRecord; runId: string }
+  | { status: 'disclosure_required'; provider: ProviderId; text: string }
+
+/** One-line notice shown the first time context goes to a provider (spec 04 rev 2). */
+export const PROVIDER_DISCLOSURE: Record<string, string> = {
+  claude: 'This conversation is sent to Claude (Anthropic) through your Claude plan. Everything you type here, and earlier messages in this chat, go to that provider.',
+  codex: 'This conversation is sent to Codex (OpenAI) through your ChatGPT plan. Everything you type here, and earlier messages in this chat, go to that provider.',
+}
+
+// ---- Connections (spec 03) ----
+
+/** One enum for connection state, used by the UI, Home, the router and the Hermes pill (spec 03). */
+export const CONNECTION_STATES = ['connected', 'needs_login', 'rate_limited', 'unavailable', 'degraded', 'unknown'] as const
+export type ConnectionState = (typeof CONNECTION_STATES)[number]
+
+export interface ConnectionRecord {
+  provider: ProviderId
+  label: string
+  state: ConnectionState
+  /** Short human reason for the state, in the person's terms. */
+  detail: string
+  /** How it is signed in, e.g. "Signed in via CLI". Never a token, never an email. */
+  method: string | null
+  /** The plan, only where the CLI reports it offline (e.g. "pro"). */
+  plan: string | null
+  version: string | null
+  /** True when chat works through JunOS with this provider today. */
+  chat: boolean
+  /** Shown instead of a state for providers that are planned or reached another way. */
+  note: 'coming' | 'via_hermes' | 'chat_later' | null
+  /** The exact command to run to sign in again. */
+  reconnect: string | null
+  /** ISO time a rate limit is expected to lift, when known. */
+  resetsAt: string | null
+  checkedAt: string
+}
+
+export interface ConnectionsResponse {
+  connections: ConnectionRecord[]
+}
+
+// ---- Inbox and Telegram (spec 07) ----
+
+export const INBOX_KINDS = ['approval', 'failure', 'result', 'finding', 'mention', 'digest'] as const
+export type InboxKind = (typeof INBOX_KINDS)[number]
+
+export type InboxPriority = 'urgent' | 'normal' | 'low'
+/** `resolved` means the thing it was about is settled elsewhere (an approval decided, expired or cancelled). */
+export type InboxStatus = 'new' | 'done' | 'snoozed' | 'resolved'
+
+export interface InboxItem {
+  id: string
+  kind: InboxKind
+  priority: InboxPriority
+  title: string
+  body: string
+  source: string
+  status: InboxStatus
+  /** For a resolved item: what happened ("approved", "denied", "expired"…). */
+  resolution: string | null
+  /** The approval or run this item is about. */
+  refId: string | null
+  createdAt: string
+  updatedAt: string
+  snoozeUntil: string | null
+  /** The live approval record, so the Inbox shows the same ApprovalCard and its current state. */
+  approval?: ApprovalRecord
+}
+
+export interface InboxCounts {
+  /** Items that still need a person: new approvals, failures and mentions. */
+  needsMe: number
+  approvals: number
+  failures: number
+  done: number
+  snoozed: number
+  all: number
+}
+
+export interface InboxResponse {
+  items: InboxItem[]
+  counts: InboxCounts
+}
+
+export interface InboxActionRequest {
+  action: 'done' | 'snooze' | 'reopen'
+  /** For snooze: an ISO time. */
+  until?: string
+}
+
+export interface TelegramStatus {
+  enabled: boolean
+  /** Why it is off, when it is. Never contains the token. */
+  reason: string | null
+  quietHours: { start: string; end: string }
+  lastPollAt: string | null
+  sent: number
+  /** Updates from anyone but the owner, or in the wrong chat, that were ignored. */
+  rejected: number
+}
+
+// ---- Scheduled tasks (spec 05) ----
+
+export const CATCH_UP_MODES = ['skip', 'once', 'all'] as const
+export type CatchUpMode = (typeof CATCH_UP_MODES)[number]
+
+export const OVERLAP_MODES = ['skip', 'queue'] as const
+export type OverlapMode = (typeof OVERLAP_MODES)[number]
+
+export const SCHEDULED_RUN_STATUSES = ['due', 'claimed', 'running', 'succeeded', 'failed', 'skipped'] as const
+export type ScheduledRunStatus = (typeof SCHEDULED_RUN_STATUSES)[number]
+
+/** Body of POST /api/tasks. A task is a prompt sent to a provider on a schedule. */
+export interface TaskInput {
+  name: string
+  prompt: string
+  provider: ProviderId
+  model: string
+  effort: Effort
+  /** Five-field cron. Seconds are not allowed, and neither is anything that fires more often than every 10 minutes. */
+  cron: string
+  timezone: string
+  /** What to do with slots missed while junosd was down (spec 05). */
+  catchUp: CatchUpMode
+  /** What to do when a slot comes due while the previous run of this task is still going. */
+  overlap: OverlapMode
+  maxAttempts: number
+  enabled: boolean
+}
+
+export interface ScheduledRunRecord {
+  id: string
+  taskId: string
+  /** The slot this run is for. Unique per task, so a slot can only exist once. */
+  dueAt: string
+  status: ScheduledRunStatus
+  attempt: number
+  retryAt: string | null
+  manual: boolean
+  startedAt: string | null
+  finishedAt: string | null
+  error: string | null
+  /** What the provider answered, kept for the run log. */
+  output: string | null
+  log: string[]
+  runId: string | null
+}
+
+export interface TaskRecord extends TaskInput {
+  id: string
+  createdAt: string
+  updatedAt: string
+  /** The next five fire times, so the schedule can be checked before it is trusted. */
+  nextRuns: string[]
+  lastRun: ScheduledRunRecord | null
+  running: boolean
+}
+
+export interface TasksResponse {
+  tasks: TaskRecord[]
+  /** True while Stop is in effect: due slots are held, not run. */
+  paused: boolean
+}
+
+export interface CronPreviewResponse {
+  valid: boolean
+  error: string | null
+  nextRuns: string[]
+}
+
+// ---- Workflows (spec 05) ----
+
+/** The workflow file format JunOS writes. Older files are upgraded on load (with a backup of the old file). */
+export const WORKFLOW_VERSION = 1
+
+export const STEP_TYPES = ['prompt', 'tool', 'approval', 'output'] as const
+export type StepType = (typeof STEP_TYPES)[number]
+
+export interface WorkflowParam {
+  key: string
+  type: 'string' | 'number' | 'boolean' | 'file'
+  label?: string
+  default?: string | number | boolean
+  required?: boolean
+}
+
+export type WorkflowTrigger =
+  | { type: 'manual' }
+  | { type: 'cron'; expr: string; timezone?: string }
+  /** `where` matches fields of the event payload, e.g. { kind: 'failure' }. */
+  | { type: 'event'; event: string; where?: Record<string, string> }
+
+export type WorkflowStep =
+  | { id: string; type: 'prompt'; prompt: string; provider?: ProviderId; model?: string; effort?: Effort; input?: string[] }
+  | { id: string; type: 'tool'; tool: string; args?: Record<string, unknown> }
+  | { id: string; type: 'approval'; message: string }
+  | { id: string; type: 'output'; to: 'inbox'; from?: string; title?: string }
+
+export interface WorkflowDefinition {
+  version: number
+  name: string
+  description?: string
+  /** Defaults for prompt steps that do not name their own. */
+  provider?: ProviderId
+  model?: string
+  effort?: Effort
+  params: WorkflowParam[]
+  triggers: WorkflowTrigger[]
+  steps: WorkflowStep[]
+}
+
+export type WorkflowRunStatus = 'queued' | 'running' | 'waiting_approval' | 'succeeded' | 'failed' | 'cancelled'
+export type WorkflowStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'skipped'
+
+export interface WorkflowStepRecord {
+  seq: number
+  stepId: string
+  type: StepType
+  status: WorkflowStepStatus
+  output: string | null
+  error: string | null
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export interface WorkflowRunRecord {
+  id: string
+  workflowId: string
+  name: string
+  /** The file format version this run executed. Editing the file does not change a run in flight. */
+  version: number
+  status: WorkflowRunStatus
+  trigger: 'manual' | 'cron' | 'event'
+  dryRun: boolean
+  params: Record<string, string | number | boolean>
+  startedAt: string
+  finishedAt: string | null
+  error: string | null
+  currentStep: string | null
+  approvalId: string | null
+  /** The workflows that caused this one, oldest first (loop guard). */
+  chain: string[]
+  steps: WorkflowStepRecord[]
+}
+
+export interface WorkflowSummary {
+  id: string
+  name: string
+  description: string
+  version: number
+  params: WorkflowParam[]
+  triggers: WorkflowTrigger[]
+  valid: boolean
+  errors: string[]
+  /** Set when the file was just upgraded from an older format. */
+  upgradedFrom: number | null
+  paused: boolean
+  pausedReason: string | null
+  running: boolean
+  lastRun: WorkflowRunRecord | null
+}
+
+export interface WorkflowDetail extends WorkflowSummary {
+  yaml: string
+}
+
+export interface WorkflowValidation {
+  valid: boolean
+  errors: string[]
+  definition?: WorkflowDefinition
+  /** The format version the text was written in, when it was older than the current one. */
+  upgradedFrom: number | null
+}
+
+export interface WorkflowRunRequest {
+  params?: Record<string, string | number | boolean>
+  /** Plan the run without sending anything or changing anything. */
+  dryRun?: boolean
+}
+
+export interface WorkflowsResponse {
+  workflows: WorkflowSummary[]
+  /** True while Stop is in effect: nothing starts. */
+  paused: boolean
+}
+
+export interface WorkflowRunsResponse {
+  runs: WorkflowRunRecord[]
+}
+
+// ---- Hermes (spec 06) ----
+
+export const HERMES_STATES = ['online', 'idle', 'working', 'paused', 'error', 'unreachable'] as const
+export type HermesState = (typeof HERMES_STATES)[number]
+
+/** `mock` is a scripted stand-in, `remote` the real agent behind its shim, `none` means nothing is connected. */
+export type HermesMode = 'mock' | 'remote' | 'none'
+
+export interface HermesStatus {
+  state: HermesState
+  currentTask: string | null
+  model: string
+  /** Seconds since the agent started, or null when unknown. */
+  uptimeS: number | null
+  /** Why it is unreachable or in error. */
+  reason: string | null
+}
+
+export const HERMES_STEP_TYPES = ['shell', 'browser', 'file', 'api', 'message'] as const
+export type HermesStepType = (typeof HERMES_STEP_TYPES)[number]
+export type HermesStepStatus = 'running' | 'done' | 'failed' | 'waiting_approval' | 'denied' | 'stopped'
+
+/** An action Hermes wants to take that needs a person's yes. */
+export interface HermesApprovalAsk {
+  class: Exclude<ActionClass, 'read'>
+  target: string
+  summary: string
+}
+
+export interface HermesStep {
+  id: string
+  directiveId: string | null
+  type: HermesStepType
+  summary: string
+  input: string
+  output: string
+  status: HermesStepStatus
+  ms: number | null
+  startedAt: string
+  /** Set while the step waits for an approval. */
+  approval?: HermesApprovalAsk
+  approvalId?: string | null
+}
+
+export interface HermesMessage {
+  id: string
+  role: 'user' | 'agent'
+  text: string
+  /** Where it was said. Telegram messages are mirrored with a badge. */
+  via: 'junos' | 'telegram'
+  directiveId: string | null
+  createdAt: string
+}
+
+export interface HermesMemoryItem {
+  id: string
+  text: string
+  pinned: boolean
+}
+
+export interface HermesSkill {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+}
+
+export interface HermesQueueItem {
+  id: string
+  text: string
+  priority: 'low' | 'normal' | 'high'
+  queuedAt: string
+}
+
+export interface HermesDirectiveRequest {
+  text: string
+  priority?: 'low' | 'normal' | 'high'
+  projectId?: string
+  /** Also echo the reply to Telegram. Off by default. */
+  echoToTelegram?: boolean
+}
+
+export interface HermesOverview {
+  mode: HermesMode
+  /** Why nothing is connected, when mode is `none`. */
+  reason: string | null
+  status: HermesStatus
+  steps: HermesStep[]
+  messages: HermesMessage[]
+  queue: HermesQueueItem[]
+  /** Set after a Stop whose result could not be confirmed. */
+  stopUnconfirmed: boolean
+}
+
+// ---- Kanban (spec 09) ----
+
+export const KANBAN_COLUMN_KINDS = ['ideas', 'ready', 'active', 'review', 'done', 'blocked'] as const
+export type KanbanColumnKind = (typeof KANBAN_COLUMN_KINDS)[number]
+
+export interface KanbanColumn {
+  key: string
+  name: string
+  /** Automation depends on the kind, never on the display name. */
+  kind: KanbanColumnKind
+  /** Shown in the header; not enforced for a person. */
+  wip: number | null
+}
+
+export const KANBAN_COLUMNS: KanbanColumn[] = [
+  { key: 'ideas', name: 'Ideas', kind: 'ideas', wip: null },
+  { key: 'ready', name: 'Ready', kind: 'ready', wip: null },
+  { key: 'in_progress', name: 'In progress', kind: 'active', wip: 3 },
+  { key: 'review', name: 'Review', kind: 'review', wip: null },
+  { key: 'done', name: 'Done', kind: 'done', wip: null },
+  { key: 'blocked', name: 'Blocked', kind: 'blocked', wip: null },
+]
+
+export const KANBAN_PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
+export type KanbanPriority = (typeof KANBAN_PRIORITIES)[number]
+export type KanbanAssignee = 'jonas' | 'hermes' | 'none'
+
+export interface KanbanChecklistItem {
+  text: string
+  done: boolean
+}
+
+export interface KanbanActivity {
+  id: string
+  at: string
+  /** `jonas`, `hermes` or `system`. */
+  actor: string
+  text: string
+}
+
+export interface KanbanCard {
+  id: string
+  column: string
+  position: number
+  title: string
+  body: string
+  /** `jonas`, `hermes`, `scout` or `workflow:<id>`. A Hermes-created card shows a marker. */
+  creator: string
+  assignee: KanbanAssignee
+  project: string
+  priority: KanbanPriority
+  labels: string[]
+  due: string | null
+  checklist: KanbanChecklistItem[]
+  /** What Hermes wrote when it finished. */
+  summary: string
+  /** Set while Hermes holds the card. */
+  claimedBy: string | null
+  createdAt: string
+  updatedAt: string
+  activity: KanbanActivity[]
+}
+
+export interface KanbanCardInput {
+  title: string
+  body?: string
+  column?: string
+  assignee?: KanbanAssignee
+  project?: string
+  priority?: KanbanPriority
+  labels?: string[]
+  due?: string | null
+  checklist?: KanbanChecklistItem[]
+}
+
+export interface KanbanCardPatch extends Partial<KanbanCardInput> {
+  /** Place the card just before this one in its column; omit to put it last. */
+  beforeId?: string | null
+}
+
+export interface KanbanBoard {
+  columns: KanbanColumn[]
+  cards: KanbanCard[]
+  projects: string[]
+  /** The card Hermes is working on right now. */
+  hermesWorkingOn: { id: string; title: string } | null
+}
+
+/** What Hermes may ask of the board. It can never move a card to Done. */
+export type KanbanAgentAction =
+  | { kind: 'create'; title: string; body?: string }
+  | { kind: 'move'; cardId: string; column: string }
+  | { kind: 'comment'; cardId: string; text: string }
+
+// ---- Files and projects (spec 11) ----
+
+export const FILE_KINDS = ['markdown', 'code', 'text', 'image', 'pdf', 'other'] as const
+export type FileKind = (typeof FILE_KINDS)[number]
+
+export interface FileFolder {
+  id: string
+  path: string
+  label: string
+  addedAt: string
+  scannedAt: string | null
+  status: 'scanning' | 'ready'
+  fileCount: number
+  projectCount: number
+}
+
+export interface FileEntry {
+  folderId: string
+  path: string
+  name: string
+  kind: FileKind
+  size: number
+  modifiedAt: string
+  projectId: string | null
+}
+
+export interface FileListing {
+  folderId: string
+  dir: string
+  dirs: string[]
+  files: FileEntry[]
+}
+
+export interface FileSearchHit extends FileEntry {
+  /** A text snippet with [[matches]] marked; plain text, to be rendered safely. */
+  snippet: string
+}
+
+export interface FileSearchResponse {
+  /** What the question was understood as. */
+  understood: { text: string; types: FileKind[]; days: number | null }
+  hits: FileSearchHit[]
+}
+
+export type FilePreview =
+  | { kind: 'markdown' | 'code' | 'text'; name: string; size: number; text: string; truncated: boolean }
+  | { kind: 'image'; name: string; size: number; dataUrl: string }
+  | { kind: 'pdf' | 'other'; name: string; size: number; note: string }
+
+export interface FolderRemoval {
+  folderId: string
+  removed: { files: number; projects: number; searchEntries: number }
+}
+
+export interface ProjectRecord {
+  id: string
+  name: string
+  path: string
+  folderId: string
+  fileCount: number
+  languages: Array<{ ext: string; count: number }>
+  branch: string | null
+  lastCommit: { at: string; subject: string } | null
+  /** Changed files in the working tree, or null when git could not say. */
+  dirty: number | null
+  /** Commits per day for the last 14 days, oldest first. */
+  activity: number[]
+}
+
+export interface AttachedFile {
+  folderId: string
+  path: string
+}
+
+// ---- Terminal (spec 15) ----
+
+export type TerminalKind = 'local' | 'vps' | 'agent'
+
+export interface TerminalSession {
+  id: string
+  kind: TerminalKind
+  label: string
+  status: 'open' | 'closed'
+  openedAt: string
+  /** The agent tab can be watched, never typed into. */
+  readOnly: boolean
+  closeReason: string | null
+}
+
+export interface TerminalOverview {
+  sessions: TerminalSession[]
+  local: { available: boolean; reason: string | null; shell: string }
+  /** The shell on the VPS goes through the Hermes shim; until that exists it is `none` or a `mock`. */
+  vps: { mode: 'none' | 'mock' | 'remote'; reason: string | null }
+}
+
+export type TerminalFrame = { type: 'data'; data: string } | { type: 'closed'; reason: string }
+
+export interface AgentExecRequest {
+  command: string
+  /** Who is asking: an agent, a workflow or Hermes. Never `jonas`. */
+  actor?: string
+  runId?: string
+  approvalId?: string
+}
+
+// ---- Scout (spec 08) ----
+
+export type ScoutCadence = 'daily' | 'weekly'
+export type ScoutSourceKind = 'feed' | 'self'
+export const SCOUT_DISMISS_REASONS = ['not relevant', 'already know', 'too risky', 'later'] as const
+export type ScoutDismissReason = (typeof SCOUT_DISMISS_REASONS)[number]
+
+export interface ScoutSource {
+  id: string
+  name: string
+  kind: ScoutSourceKind
+  /** The feed address. Empty for the JunOS self-report. */
+  url: string
+  cadence: ScoutCadence
+  enabled: boolean
+  lastCheckedAt: string | null
+  /** `ok`, `error` or `never` (not checked yet). */
+  health: 'ok' | 'error' | 'never'
+  lastError: string | null
+}
+
+export interface ScoutSourceInput {
+  name: string
+  url?: string
+  kind?: ScoutSourceKind
+  cadence?: ScoutCadence
+  enabled?: boolean
+}
+
+export interface ScoutSettings {
+  /** Findings at or above this relevance reach the Inbox. */
+  threshold: number
+  /** Model calls Scout may make per day on a schedule (a manual run is always allowed). */
+  dailyModelCalls: number
+  provider: 'claude' | 'codex'
+}
+
+export interface ScoutFinding {
+  id: string
+  title: string
+  sourceName: string
+  link: string
+  summary: string
+  relevance: number
+  effort: 'S' | 'M' | 'L'
+  risk: 'low' | 'medium' | 'high'
+  touches: string
+  why: string
+  suggestion: string
+  status: 'new' | 'dismissed' | 'carded'
+  dismissReason: string | null
+  cardId: string | null
+  createdAt: string
+}
+
+export interface ScoutRunRecord {
+  id: string
+  trigger: 'manual' | 'schedule'
+  status: 'running' | 'succeeded' | 'failed' | 'skipped'
+  startedAt: string
+  finishedAt: string | null
+  sources: number
+  items: number
+  kept: number
+  findings: number
+  modelCalls: number
+  error: string | null
+  log: string[]
+}
+
+export interface ScoutOverview {
+  sources: ScoutSource[]
+  settings: ScoutSettings
+  findings: ScoutFinding[]
+  runs: ScoutRunRecord[]
+  running: boolean
+}
+
+// ---- Home and search (spec 10) ----
+
+/** One Home card. A card that fails does not break the page: it says so, and keeps its last good data as `stale` when it has one. */
+export interface HomeCard<T> {
+  status: 'ok' | 'error' | 'stale'
+  asOf: string
+  data: T | null
+  error: string | null
+}
+
+export interface HomeNeedsItem {
+  id: string
+  kind: InboxKind
+  priority: InboxPriority
+  title: string
+  body: string
+  createdAt: string
+  /** For a waiting approval: what a decision from here may be. Irreversible ones are reviewed in the Inbox, not approved from Home. */
+  approval: { id: string; irreversible: boolean } | null
+}
+
+export interface HomeData {
+  needs: { total: number; items: HomeNeedsItem[] }
+  running: { items: Array<{ kind: 'run' | 'workflow' | 'task' | 'scout' | 'hermes'; label: string; since: string | null }> }
+  upcoming: { paused: boolean; tasks: Array<{ id: string; name: string; cron: string; timezone: string; next: string | null; running: boolean }> }
+  hermes: { mode: 'mock' | 'remote' | 'none'; state: string; currentTask: string | null; model: string; steps: Array<{ summary: string; status: string }>; stopUnconfirmed: boolean }
+  board: { counts: Array<{ key: string; name: string; count: number }>; hermesWorkingOn: { id: string; title: string } | null; blocked: Array<{ id: string; title: string }> }
+  subscriptions: Array<{ provider: string; label: string; state: string; detail: string; resetsAt: string | null; note: string | null }>
+  scout: Array<{ id: string; title: string; relevance: number; effort: string; sourceName: string }>
+  recent: { projects: Array<{ id: string; name: string; fileCount: number }>; files: Array<{ folderId: string; path: string; name: string; kind: string; modifiedAt: string }> }
+}
+
+export type HomeResponse = { now: string; cards: { [K in keyof HomeData]: HomeCard<HomeData[K]> } }
+
+export interface SearchHit {
+  id: string
+  title: string
+  subtitle: string
+  /** Where the screen for it is. */
+  to: string
+}
+
+export interface SearchGroup {
+  type: 'conversations' | 'messages' | 'cards' | 'findings' | 'inbox' | 'tasks' | 'workflows' | 'projects' | 'files'
+  label: string
+  hits: SearchHit[]
+}
+
+export interface SearchResponse {
+  q: string
+  groups: SearchGroup[]
+}
+
+// ---- Backups ----
+
+export interface BackupRecord {
+  id: string
+  startedAt: string
+  finishedAt: string | null
+  status: 'running' | 'ok' | 'failed'
+  trigger: 'manual' | 'schedule'
+  /** The backup file's name inside the backups folder. */
+  file: string | null
+  size: number | null
+  /** True only when the copy was opened on its own and passed the checks. */
+  verified: boolean
+  /** False once retention has deleted the file. */
+  present: boolean
+  error: string | null
+}
+
+export interface BackupsResponse {
+  dir: string
+  keep: number
+  /** The local hour after which a nightly backup is due. */
+  hour: number
+  running: boolean
+  /** When the next scheduled backup becomes due (now, if one is overdue). */
+  nextDue: string
+  /** True when that time has already passed (the daemon was off, or the first backup is still to come). */
+  overdue: boolean
+  backups: BackupRecord[]
+}
