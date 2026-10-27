@@ -285,6 +285,8 @@ button.link { margin-left: auto; padding: 2px 6px; background: none; border: non
 .kanban-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 10px; margin-top: 12px; overflow-x: auto; padding-bottom: 8px; align-items: start; }
 .kanban-column { display: grid; gap: 8px; align-content: start; min-height: 160px; }
 .kanban-column h3 { margin: 0; }
+.kanban-column { min-width: 0; }
+.kanban-column form, .kanban-column input { width: 100%; min-width: 0; }
 .kanban-column .over { color: var(--warn); }
 .kanban-card { background: var(--panel-strong); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .kanban-card[data-priority="P0"] { border-left: 3px solid var(--bad); }
