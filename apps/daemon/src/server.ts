@@ -211,6 +211,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
   let store: EventStore | undefined
   let server: Server | undefined
   try {
+    const now = options.now ?? Date.now
     store = new EventStore(join(home, 'junos.db'))
     const db = store
     const startedAt = new Date()
@@ -437,6 +438,12 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
           stop()
           return
         }
+        if (!db.sessionActive(sessionId, now())) {
+          stop()
+          res.end()
+          if (db.activeSessionCount(now()) === 0) pairing.ensureAvailable()
+          return
+        }
         res.write(chunk)
       }
       res.on('error', stop)
@@ -488,8 +495,9 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
       if (req.method === 'GET' && url.pathname === '/api/health') {
         return sendJson(res, 200, { ok: true, name: 'junosd', version: VERSION } satisfies HealthResponse)
       }
-      const session = sessionFromRequest(db, req)
+      const session = sessionFromRequest(db, req, now)
       if (req.method === 'GET' && url.pathname === '/api/session') {
+        if (!session && db.activeSessionCount(now()) === 0) pairing.ensureAvailable()
         return sendJson(res, 200, (session ? { paired: true, csrf: session.csrf } : { paired: false }) satisfies SessionResponse)
       }
       if (req.method === 'POST' && url.pathname === '/api/pair') {
@@ -501,7 +509,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
               db.append('auth.pair_failed', { reason: result })
               return sendJson(res, 401, { error: result })
             }
-            const created = createSession(db)
+            const created = createSession(db, now)
             db.append('auth.paired', { sessionId: created.id })
             res.setHeader('set-cookie', sessionCookie(created.token))
             sendJson(res, 200, { paired: true, csrf: created.csrf } satisfies SessionResponse)
@@ -1137,7 +1145,7 @@ export async function startDaemon(options: DaemonOptions): Promise<Daemon> {
         // A revoked session must stop receiving events at once, not when its stream happens to drop.
         for (const stream of streams) if (streamOwner.get(stream) === session.id) stream.end()
         // With no paired browser left, announce a fresh code so the owner is never locked out.
-        if (db.activeSessionCount() === 0) pairing.issue()
+        if (db.activeSessionCount(now()) === 0) pairing.issue()
         res.setHeader('set-cookie', clearedSessionCookie())
         return sendJson(res, 200, { paired: false } satisfies SessionResponse)
       }
