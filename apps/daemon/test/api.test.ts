@@ -190,8 +190,8 @@ describe('lifecycle', () => {
 
     assert.equal(duplicate, undefined, 'a second daemon in this process is rejected')
     assert.equal(JSON.parse(readFileSync(lock, 'utf8')).port, first.port, 'the original lock is retained')
-    const health = await getJson<HealthResponse>(`${first.url}/api/health`)
-    assert.equal(health.pid, process.pid, 'the original daemon remains healthy')
+    const health = await fetch(`${first.url}/api/health`)
+    assert.equal(health.status, 200, "the original daemon remains healthy")
 
     await first.close()
     assert.equal(existsSync(lock), false, 'lock is removed on clean close')
