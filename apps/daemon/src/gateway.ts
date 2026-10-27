@@ -152,7 +152,7 @@ export class Gateway {
           req.runId ?? null,
           digest,
           // What the approver sees: redacted. The digest still binds the exact, unredacted action.
-          JSON.stringify({ actor, tool: req.tool, target: record.target, args: redact(args) }),
+          JSON.stringify({ actor, tool: req.tool, target: redact(record.target), args: redact(args) }),
           cls,
           req.project ?? null,
           iso(requestedAt),
@@ -338,7 +338,7 @@ function toRecord(row: ApprovalRow): ApprovalRecord {
     class: row.class,
     actor: shown.actor,
     tool: shown.tool,
-    target: shown.target,
+    target: String(redact(shown.target)),
     project: row.project_id,
     runId: row.run_id,
     args: shown.args,

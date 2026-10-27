@@ -342,6 +342,30 @@ describe('audit and redaction', () => {
     assert.equal(((await act(tweaked)).out as { reason: string }).reason, 'digest_mismatch')
   })
 
+  it('redacts target secrets in stored and legacy approval records without changing digest binding', async () => {
+    const { act, ask, approvals, b, d } = await setup()
+    const secretTarget = 'Bearer abcdefghijklmnop123456'
+    const id = await ask(send({ args: { to: secretTarget } }))
+
+    const raw = d.store.db.prepare('SELECT action_json FROM approval WHERE id = ?').get(id) as { action_json: string }
+    assert.ok(!raw.action_json.includes(secretTarget), 'new approval rows persist only the redacted target')
+    const listed = (await approvals('pending')).find((a) => a.id === id)!
+    assert.equal(listed.target, '[redacted]')
+    assert.ok(!JSON.stringify(listed).includes(secretTarget), 'the approval API does not reveal the target secret')
+
+    // Simulate an approval row written before target redaction was added.
+    const legacy = JSON.parse(raw.action_json) as { actor: string; tool: string; target: string; args: unknown }
+    legacy.target = secretTarget
+    d.store.db.prepare('UPDATE approval SET action_json = ? WHERE id = ?').run(JSON.stringify(legacy), id)
+    const legacyRead = await b.json<ApprovalRecord>(`/api/approvals/${id}`)
+    assert.equal(legacyRead.target, '[redacted]')
+    assert.ok(!JSON.stringify(legacyRead).includes(secretTarget), 'legacy rows are redacted when read')
+
+    const altered = await act(send({ approvalId: id, args: { to: 'Bearer zyxwvutsrqponmlk987654' } }))
+    assert.equal(altered.http, 409)
+    assert.equal((altered.out as { reason: string }).reason, 'digest_mismatch')
+  })
+
   it('tells the approver everything the spec asks for', async () => {
     const { ask, approvals } = await setup()
     await ask(send({ project: 'junos', runId: 'run-9' }))
